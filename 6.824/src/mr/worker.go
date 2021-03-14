@@ -33,6 +33,7 @@ func Worker(mapf func(string, string) []KeyValue,
 	args := MrArgs{}
 	reply := MrReply{}
 	call("Coordinator.AssignTask", &args, &reply)
+	fmt.Printf("%v\n", reply)
 }
 
 //

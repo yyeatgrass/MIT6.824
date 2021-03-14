@@ -6,40 +6,47 @@ import "os"
 import "net/rpc"
 import "net/http"
 import "fmt"
+import . "github.com/yyeatgrass/go-datastructures/queue"
 
 type Coordinator struct {
 	// Your definitions here.
-	usMapTasks    []string
-	ifMapTasks    []string
-	usReduceTasks []string
-	ifReduceTasks []string
+	usMapTasks    *Queue
+	ifMapTasks    *Queue
+	usReduceTasks *Queue
+	ifReduceTasks *Queue
 }
 
 // Your code here -- RPC handlers for the worker to call.
 func (c *Coordinator) AssignTask(args *MrArgs, reply *MrReply) error {
-	if len(c.usMapTasks) > 0 {
+	if !c.usMapTasks.Empty() {
+		mts, err := c.usMapTasks.Get(1)
+		if err != nil {
+			*reply = MrReply{IsTaskAssigned: false}
+			return err
+		}
+		mt := mts[0].(string)
 		*reply = MrReply{
 			IsTaskAssigned: true,
 			TaskType:       MAP,
-			File:           c.usMapTasks[0],
+			File:           mt,
 		}
-		c.ifMapTasks = append(c.ifMapTasks, c.usMapTasks[0])
-		c.usMapTasks = c.usMapTasks[1:]
 		return nil
 	}
-	if len(c.usReduceTasks) > 0 {
+	if !c.usReduceTasks.Empty() {
+		rts, err := c.usReduceTasks.Get(1)
+		if err != nil {
+			*reply = MrReply{IsTaskAssigned: false}
+			return err
+		}
+		rt := rts[0].(string)
 		*reply = MrReply{
 			IsTaskAssigned: true,
 			TaskType:       REDUCE,
-			File:           c.usReduceTasks[0],
+			File:           rt,
 		}
-		c.ifReduceTasks = append(c.ifReduceTasks, c.usReduceTasks[0])
-		c.usReduceTasks = c.usReduceTasks[1:]
 		return nil
 	}
-	*reply = MrReply{
-		IsTaskAssigned: false,
-	}
+	*reply = MrReply{IsTaskAssigned: false}
 	return nil
 }
 
@@ -78,7 +85,13 @@ func (c *Coordinator) Done() bool {
 //
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	c := Coordinator{
-		usMapTasks: files,
+		usMapTasks:    new(Queue),
+		ifMapTasks:    new(Queue),
+		usReduceTasks: new(Queue),
+		ifReduceTasks: new(Queue),
+	}
+	for _, f := range files {
+		c.usMapTasks.Put(f)
 	}
 	fmt.Printf("usMapTasks: %s", c.usMapTasks)
 	// Your code here.
