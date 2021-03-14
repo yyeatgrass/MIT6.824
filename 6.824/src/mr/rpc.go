@@ -9,6 +9,13 @@ package mr
 import "os"
 import "strconv"
 
+type TType int
+
+const (
+	MAP    TType = 0
+	REDUCE TType = 1
+)
+
 //
 // example to show how to declare the arguments
 // and reply for an RPC.
@@ -18,7 +25,9 @@ type MrArgs struct {
 }
 
 type MrReply struct {
-	File string
+	IsTaskAssigned bool
+	TaskType       TType
+	File           string
 }
 
 // Add your RPC definitions here.

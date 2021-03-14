@@ -5,18 +5,41 @@ import "net"
 import "os"
 import "net/rpc"
 import "net/http"
+import "fmt"
 
 type Coordinator struct {
 	// Your definitions here.
-	unstartedTasks []string
-	inflightTasks  []string
+	usMapTasks    []string
+	ifMapTasks    []string
+	usReduceTasks []string
+	ifReduceTasks []string
 }
 
 // Your code here -- RPC handlers for the worker to call.
 func (c *Coordinator) AssignTask(args *MrArgs, reply *MrReply) error {
-	c.inflightTasks = append(c.inflightTasks, c.unstartedTasks[0])
-	c.unstartedTasks = c.unstartedTasks[1:]
-	reply.File = c.unstartedTasks[0]
+	if len(c.usMapTasks) > 0 {
+		*reply = MrReply{
+			IsTaskAssigned: true,
+			TaskType:       MAP,
+			File:           c.usMapTasks[0],
+		}
+		c.ifMapTasks = append(c.ifMapTasks, c.usMapTasks[0])
+		c.usMapTasks = c.usMapTasks[1:]
+		return nil
+	}
+	if len(c.usReduceTasks) > 0 {
+		*reply = MrReply{
+			IsTaskAssigned: true,
+			TaskType:       REDUCE,
+			File:           c.usReduceTasks[0],
+		}
+		c.ifReduceTasks = append(c.ifReduceTasks, c.usReduceTasks[0])
+		c.usReduceTasks = c.usReduceTasks[1:]
+		return nil
+	}
+	*reply = MrReply{
+		IsTaskAssigned: false,
+	}
 	return nil
 }
 
@@ -55,9 +78,9 @@ func (c *Coordinator) Done() bool {
 //
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	c := Coordinator{
-		unstartedTasks: files,
+		usMapTasks: files,
 	}
-
+	fmt.Printf("usMapTasks: %s", c.usMapTasks)
 	// Your code here.
 	c.server()
 	return &c
