@@ -16,18 +16,22 @@ const (
 	REDUCE TType = 1
 )
 
+type MrTask struct {
+	TaskType TType
+	TaskNum  int
+	File     string
+}
+
 //
 // example to show how to declare the arguments
 // and reply for an RPC.
 //
-
 type MrArgs struct {
 }
 
 type MrReply struct {
 	IsTaskAssigned bool
-	TaskType       TType
-	File           string
+	Task           MrTask
 }
 
 // Add your RPC definitions here.

@@ -24,12 +24,12 @@ func (c *Coordinator) AssignTask(args *MrArgs, reply *MrReply) error {
 			*reply = MrReply{IsTaskAssigned: false}
 			return err
 		}
-		mt := mts[0].(string)
+		mt := mts[0].(*MrTask)
 		*reply = MrReply{
 			IsTaskAssigned: true,
-			TaskType:       MAP,
-			File:           mt,
+			Task:           *mt,
 		}
+		c.ifMapTasks.Put(mt)
 		return nil
 	}
 	if !c.usReduceTasks.Empty() {
@@ -38,12 +38,12 @@ func (c *Coordinator) AssignTask(args *MrArgs, reply *MrReply) error {
 			*reply = MrReply{IsTaskAssigned: false}
 			return err
 		}
-		rt := rts[0].(string)
+		rt := rts[0].(*MrTask)
 		*reply = MrReply{
 			IsTaskAssigned: true,
-			TaskType:       REDUCE,
-			File:           rt,
+			Task:           *rt,
 		}
+		c.ifReduceTasks.Put(rt)
 		return nil
 	}
 	*reply = MrReply{IsTaskAssigned: false}
@@ -90,8 +90,14 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 		usReduceTasks: new(Queue),
 		ifReduceTasks: new(Queue),
 	}
-	for _, f := range files {
-		c.usMapTasks.Put(f)
+	for i, f := range files {
+		c.usMapTasks.Put(
+			&MrTask{
+				TaskType: MAP,
+				TaskNum:  i,
+				File:     f,
+			},
+		)
 	}
 	fmt.Printf("usMapTasks: %s", c.usMapTasks)
 	// Your code here.
