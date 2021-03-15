@@ -31,6 +31,7 @@ type MrArgs struct {
 
 type MrReply struct {
 	IsTaskAssigned bool
+	IsAllWorkDone  bool
 	Task           MrTask
 }
 

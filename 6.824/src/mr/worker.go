@@ -4,6 +4,7 @@ import "fmt"
 import "log"
 import "net/rpc"
 import "hash/fnv"
+import "time"
 
 //
 // Map functions return a slice of KeyValue.
@@ -30,10 +31,18 @@ func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
 
 	// Your worker implementation here.
-	args := MrArgs{}
-	reply := MrReply{}
-	call("Coordinator.AssignTask", &args, &reply)
-	fmt.Printf("%v\n", reply)
+	for {
+		args := MrArgs{}
+		reply := MrReply{}
+		call("Coordinator.AssignTask", &args, &reply)
+		if reply.IsAllWorkDone {
+			break
+		}
+		fmt.Printf("%v\n", reply)
+		if !reply.IsTaskAssigned {
+			time.Sleep(1 * time.Second)
+		}
+	}
 }
 
 //

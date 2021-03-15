@@ -46,7 +46,11 @@ func (c *Coordinator) AssignTask(args *MrArgs, reply *MrReply) error {
 		c.ifReduceTasks.Put(rt)
 		return nil
 	}
+
 	*reply = MrReply{IsTaskAssigned: false}
+	if c.ifMapTasks.Empty() && c.ifReduceTasks.Empty() {
+		reply.IsAllWorkDone = true
+	}
 	return nil
 }
 
