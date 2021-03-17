@@ -11,9 +11,9 @@ import . "github.com/yyeatgrass/go-datastructures/queue"
 type Coordinator struct {
 	// Your definitions here.
 	usMapTasks    *Queue
-	ifMapTasks    *Queue
+	ifMapTasks    map[int]*MrTask
 	usReduceTasks *Queue
-	ifReduceTasks *Queue
+	ifReduceTasks map[int]*MrTask
 }
 
 // Your code here -- RPC handlers for the worker to call.
@@ -29,7 +29,7 @@ func (c *Coordinator) AssignTask(args *MrArgs, reply *MrReply) error {
 			IsTaskAssigned: true,
 			Task:           *mt,
 		}
-		c.ifMapTasks.Put(mt)
+		c.ifMapTasks[mt.TaskNum] = mt
 		return nil
 	}
 	if !c.usReduceTasks.Empty() {
@@ -43,12 +43,12 @@ func (c *Coordinator) AssignTask(args *MrArgs, reply *MrReply) error {
 			IsTaskAssigned: true,
 			Task:           *rt,
 		}
-		c.ifReduceTasks.Put(rt)
+		c.ifReduceTasks[rt.TaskNum] = rt
 		return nil
 	}
 
 	*reply = MrReply{IsTaskAssigned: false}
-	if c.ifMapTasks.Empty() && c.ifReduceTasks.Empty() {
+	if len(c.ifMapTasks) == 0 && len(c.ifReduceTasks) == 0 {
 		reply.IsAllWorkDone = true
 	}
 	return nil
@@ -90,9 +90,9 @@ func (c *Coordinator) Done() bool {
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	c := Coordinator{
 		usMapTasks:    new(Queue),
-		ifMapTasks:    new(Queue),
+		ifMapTasks:    map[int]*MrTask{},
 		usReduceTasks: new(Queue),
-		ifReduceTasks: new(Queue),
+		ifReduceTasks: map[int]*MrTask{},
 	}
 	for i, f := range files {
 		c.usMapTasks.Put(
