@@ -7,13 +7,21 @@ import "net/rpc"
 import "net/http"
 import "fmt"
 import . "github.com/yyeatgrass/go-datastructures/queue"
+import cmap "github.com/yyeatgrass/concurrent-map"
+import "time"
+import "sync"
+import "strconv"
+
+
 
 type Coordinator struct {
 	// Your definitions here.
+	mu            sync.Mutex
 	usMapTasks    *Queue
-	ifMapTasks    map[int]*MrTask
+	ifMapTasks    cmap.ConcurrentMap
 	usReduceTasks *Queue
-	ifReduceTasks map[int]*MrTask
+	ifReduceTasks cmap.ConcurrentMap
+	timeOutChan   chan *MrTask
 }
 
 // Your code here -- RPC handlers for the worker to call.
@@ -29,7 +37,11 @@ func (c *Coordinator) AssignTask(args *MrArgs, reply *MrReply) error {
 			IsTaskAssigned: true,
 			Task:           *mt,
 		}
-		c.ifMapTasks[mt.TaskNum] = mt
+		c.ifMapTasks.Set(mt.TaskNum, mt)
+		go func() {
+			time.Sleep(10*time.Second)
+			c.timeOutChan <- mt
+		}()
 		return nil
 	}
 	if !c.usReduceTasks.Empty() {
@@ -43,12 +55,16 @@ func (c *Coordinator) AssignTask(args *MrArgs, reply *MrReply) error {
 			IsTaskAssigned: true,
 			Task:           *rt,
 		}
-		c.ifReduceTasks[rt.TaskNum] = rt
+		c.ifReduceTasks.Set(rt.TaskNum, rt)
+		go func() {
+			time.Sleep(10*time.Second)
+			c.timeOutChan <- rt
+		}()
 		return nil
 	}
 
 	*reply = MrReply{IsTaskAssigned: false}
-	if len(c.ifMapTasks) == 0 && len(c.ifReduceTasks) == 0 {
+	if c.ifMapTasks.IsEmpty() && c.ifReduceTasks.IsEmpty() {
 		reply.IsAllWorkDone = true
 	}
 	return nil
@@ -90,20 +106,44 @@ func (c *Coordinator) Done() bool {
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	c := Coordinator{
 		usMapTasks:    new(Queue),
-		ifMapTasks:    map[int]*MrTask{},
+		ifMapTasks:    cmap.New(),
 		usReduceTasks: new(Queue),
-		ifReduceTasks: map[int]*MrTask{},
+		ifReduceTasks: cmap.New(),
+		timeOutChan:   make(chan *MrTask),
 	}
 	for i, f := range files {
 		c.usMapTasks.Put(
 			&MrTask{
 				TaskType: MAP,
-				TaskNum:  i,
+				TaskNum:  strconv.Itoa(i),
 				File:     f,
 			},
 		)
 	}
-	fmt.Printf("usMapTasks: %s", c.usMapTasks)
+	fmt.Printf("usMapTasks: %v", c.usMapTasks)
+	go func() {
+		for c.Done() == false {
+			t := <- c.timeOutChan
+			var ifTasks cmap.ConcurrentMap
+			var usTaskQueue *Queue
+			if t.TaskType == MAP {
+				ifTasks = c.ifMapTasks
+				usTaskQueue = c.usMapTasks
+			} else {
+				ifTasks = c.ifReduceTasks
+				usTaskQueue = c.usReduceTasks
+			}
+			c.mu.Lock()
+			_, ok := ifTasks.Get(t.TaskNum)
+			if ok {
+				ifTasks.Remove(t.TaskNum)
+				c.mu.Unlock()
+				usTaskQueue.Put(t)
+			} else {
+				c.mu.Unlock()
+			}
+		}
+	}()
 	// Your code here.
 	c.server()
 	return &c

@@ -18,7 +18,7 @@ const (
 
 type MrTask struct {
 	TaskType TType
-	TaskNum  int
+	TaskNum  string
 	File     string
 }
 

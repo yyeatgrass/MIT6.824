@@ -1,4 +1,6 @@
 github.com/golang-collections/go-datastructures v0.0.0-20150211160725-59788d5eb259 h1:ZHJ7+IGpuOXtVf6Zk/a3WuHQgkC+vXwaqfUBDFwahtI=
 github.com/golang-collections/go-datastructures v0.0.0-20150211160725-59788d5eb259/go.mod h1:9Qcha0gTWLw//0VNka1Cbnjvg3pNKGFdAm7E9sBabxE=
+github.com/yyeatgrass/concurrent-map v0.0.0-20210106121528-16402b402231 h1:0dNO0B2rujrkEFe7PjxnKOba/GG+uQcdbbcRrZNY6QU=
+github.com/yyeatgrass/concurrent-map v0.0.0-20210106121528-16402b402231/go.mod h1:ssz9Gkd4y/nXDp+Ivi81tGHXQ1Guq51zDf9rBNsx7Hg=
 github.com/yyeatgrass/go-datastructures v0.0.0-20150211160725-59788d5eb259 h1:qVEmwOT9zRmc9Q+d7Ba87+uYTz/rDB7I5lyQEiw1Ok4=
 github.com/yyeatgrass/go-datastructures v0.0.0-20150211160725-59788d5eb259/go.mod h1:zpzZZ2JlwvT4tDLf2QH8f5LsjP3/O45bfHto3yP6liY=
