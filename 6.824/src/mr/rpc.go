@@ -37,7 +37,8 @@ type ATReply struct {
 }
 
 type ATDArgs struct {
-	Task MrTask
+	IsTaskDone bool
+	Task       MrTask
 }
 
 type ATDReply struct {

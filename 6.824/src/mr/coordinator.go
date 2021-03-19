@@ -13,6 +13,8 @@ import "sync"
 import "strconv"
 import "errors"
 
+
+
 type Coordinator struct {
 	// Your definitions here.
 	mu            sync.Mutex
@@ -21,7 +23,7 @@ type Coordinator struct {
 	usReduceTasks *Queue
 	ifReduceTasks cmap.ConcurrentMap
 	nReduce       int
-	timeOutChan   chan *MrTask
+	recycleChan   chan *MrTask
 }
 
 // Your code here -- RPC handlers for the worker to call.
@@ -36,11 +38,12 @@ func (c *Coordinator) AssignTask(args *ATArgs, reply *ATReply) error {
 		*reply = ATReply{
 			IsTaskAssigned: true,
 			Task:           *mt,
+			NReduce:        c.nReduce,
 		}
 		c.ifMapTasks.Set(mt.TaskNum, mt)
 		go func() {
-			time.Sleep(10 * time.Second)
-			c.timeOutChan <- mt
+			time.Sleep(10*time.Second)
+			c.recycleChan <- mt
 		}()
 		return nil
 	}
@@ -57,8 +60,8 @@ func (c *Coordinator) AssignTask(args *ATArgs, reply *ATReply) error {
 		}
 		c.ifReduceTasks.Set(rt.TaskNum, rt)
 		go func() {
-			time.Sleep(10 * time.Second)
-			c.timeOutChan <- rt
+			time.Sleep(10*time.Second)
+			c.recycleChan <- rt
 		}()
 		return nil
 	}
@@ -71,6 +74,10 @@ func (c *Coordinator) AssignTask(args *ATArgs, reply *ATReply) error {
 }
 
 func (c *Coordinator) AssignedTaskDone(args *ATDArgs, reply *ATDReply) error {
+	if !args.IsTaskDone {
+		c.recycleChan <- &args.Task
+		return nil
+	}
 	t := args.Task
 	var ifTasks cmap.ConcurrentMap
 	switch t.TaskType {
@@ -119,7 +126,7 @@ func (c *Coordinator) Done() bool {
 	// Your code here.
 	c.mu.Lock()
 	ret = c.usMapTasks.Empty() && c.usReduceTasks.Empty() &&
-		c.ifMapTasks.IsEmpty() && c.ifReduceTasks.IsEmpty()
+			c.ifMapTasks.IsEmpty() && c.ifReduceTasks.IsEmpty()
 	c.mu.Unlock()
 	return ret
 }
@@ -135,7 +142,8 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 		ifMapTasks:    cmap.New(),
 		usReduceTasks: new(Queue),
 		ifReduceTasks: cmap.New(),
-		timeOutChan:   make(chan *MrTask),
+		recycleChan:   make(chan *MrTask),
+		nReduce:       nReduce,
 	}
 	for i, f := range files {
 		c.usMapTasks.Put(
@@ -149,7 +157,7 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	fmt.Printf("usMapTasks: %v", c.usMapTasks)
 	go func() {
 		for c.Done() == false {
-			t := <-c.timeOutChan
+			t := <- c.recycleChan
 			var ifTasks cmap.ConcurrentMap
 			var usTaskQueue *Queue
 			if t.TaskType == MAP {
