@@ -32,8 +32,8 @@ func Worker(mapf func(string, string) []KeyValue,
 
 	// Your worker implementation here.
 	for {
-		args := MrArgs{}
-		reply := MrReply{}
+		args := ATArgs{}
+		reply := ATReply{}
 		call("Coordinator.AssignTask", &args, &reply)
 		if reply.IsAllWorkDone {
 			break

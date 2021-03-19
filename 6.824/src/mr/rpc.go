@@ -26,13 +26,21 @@ type MrTask struct {
 // example to show how to declare the arguments
 // and reply for an RPC.
 //
-type MrArgs struct {
+type ATArgs struct {
 }
 
-type MrReply struct {
+type ATReply struct {
 	IsTaskAssigned bool
 	IsAllWorkDone  bool
 	Task           MrTask
+}
+
+type ATDArgs struct {
+	Task MrTask
+}
+
+type ATDReply struct {
+	Committed bool
 }
 
 // Add your RPC definitions here.

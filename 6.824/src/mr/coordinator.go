@@ -11,8 +11,7 @@ import cmap "github.com/yyeatgrass/concurrent-map"
 import "time"
 import "sync"
 import "strconv"
-
-
+import "errors"
 
 type Coordinator struct {
 	// Your definitions here.
@@ -25,21 +24,21 @@ type Coordinator struct {
 }
 
 // Your code here -- RPC handlers for the worker to call.
-func (c *Coordinator) AssignTask(args *MrArgs, reply *MrReply) error {
+func (c *Coordinator) AssignTask(args *ATArgs, reply *ATReply) error {
 	if !c.usMapTasks.Empty() {
 		mts, err := c.usMapTasks.Get(1)
 		if err != nil {
-			*reply = MrReply{IsTaskAssigned: false}
+			*reply = ATReply{IsTaskAssigned: false}
 			return err
 		}
 		mt := mts[0].(*MrTask)
-		*reply = MrReply{
+		*reply = ATReply{
 			IsTaskAssigned: true,
 			Task:           *mt,
 		}
 		c.ifMapTasks.Set(mt.TaskNum, mt)
 		go func() {
-			time.Sleep(10*time.Second)
+			time.Sleep(10 * time.Second)
 			c.timeOutChan <- mt
 		}()
 		return nil
@@ -47,26 +46,49 @@ func (c *Coordinator) AssignTask(args *MrArgs, reply *MrReply) error {
 	if !c.usReduceTasks.Empty() {
 		rts, err := c.usReduceTasks.Get(1)
 		if err != nil {
-			*reply = MrReply{IsTaskAssigned: false}
+			*reply = ATReply{IsTaskAssigned: false}
 			return err
 		}
 		rt := rts[0].(*MrTask)
-		*reply = MrReply{
+		*reply = ATReply{
 			IsTaskAssigned: true,
 			Task:           *rt,
 		}
 		c.ifReduceTasks.Set(rt.TaskNum, rt)
 		go func() {
-			time.Sleep(10*time.Second)
+			time.Sleep(10 * time.Second)
 			c.timeOutChan <- rt
 		}()
 		return nil
 	}
 
-	*reply = MrReply{IsTaskAssigned: false}
+	*reply = ATReply{IsTaskAssigned: false}
 	if c.ifMapTasks.IsEmpty() && c.ifReduceTasks.IsEmpty() {
 		reply.IsAllWorkDone = true
 	}
+	return nil
+}
+
+func (c *Coordinator) AssignedTaskDone(args *ATDArgs, reply *ATDReply) error {
+	t := args.Task
+	var ifTasks cmap.ConcurrentMap
+	switch t.TaskType {
+	case MAP:
+		ifTasks = c.ifMapTasks
+	case REDUCE:
+		ifTasks = c.ifReduceTasks
+	default:
+		return errors.New("Unknown task type.")
+	}
+
+	c.mu.Lock()
+	if _, ok := ifTasks.Get(t.TaskNum); ok {
+		ifTasks.Remove(t.TaskNum)
+		reply.Committed = true
+	} else {
+		reply.Committed = false
+	}
+	c.mu.Unlock()
 	return nil
 }
 
@@ -94,7 +116,10 @@ func (c *Coordinator) Done() bool {
 	ret := false
 
 	// Your code here.
-
+	c.mu.Lock()
+	ret = c.usMapTasks.Empty() && c.usReduceTasks.Empty() &&
+		c.ifMapTasks.IsEmpty() && c.ifReduceTasks.IsEmpty()
+	c.mu.Unlock()
 	return ret
 }
 
@@ -123,7 +148,7 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	fmt.Printf("usMapTasks: %v", c.usMapTasks)
 	go func() {
 		for c.Done() == false {
-			t := <- c.timeOutChan
+			t := <-c.timeOutChan
 			var ifTasks cmap.ConcurrentMap
 			var usTaskQueue *Queue
 			if t.TaskType == MAP {
@@ -137,11 +162,9 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 			_, ok := ifTasks.Get(t.TaskNum)
 			if ok {
 				ifTasks.Remove(t.TaskNum)
-				c.mu.Unlock()
 				usTaskQueue.Put(t)
-			} else {
-				c.mu.Unlock()
 			}
+			c.mu.Unlock()
 		}
 	}()
 	// Your code here.
