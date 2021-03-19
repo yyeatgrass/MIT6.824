@@ -20,6 +20,7 @@ type Coordinator struct {
 	ifMapTasks    cmap.ConcurrentMap
 	usReduceTasks *Queue
 	ifReduceTasks cmap.ConcurrentMap
+	nReduce       int
 	timeOutChan   chan *MrTask
 }
 

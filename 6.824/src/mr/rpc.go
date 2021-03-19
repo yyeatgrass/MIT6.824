@@ -32,6 +32,7 @@ type ATArgs struct {
 type ATReply struct {
 	IsTaskAssigned bool
 	IsAllWorkDone  bool
+	NReduce        int
 	Task           MrTask
 }
 
@@ -40,7 +41,8 @@ type ATDArgs struct {
 }
 
 type ATDReply struct {
-	Committed bool
+	Committed     bool
+	IsAllWorkDone bool
 }
 
 // Add your RPC definitions here.
