@@ -5,6 +5,9 @@ import "log"
 import "net/rpc"
 import "hash/fnv"
 import "time"
+import "encoding/json"
+import "os"
+import "io/ioutil"
 
 //
 // Map functions return a slice of KeyValue.
@@ -32,15 +35,82 @@ func Worker(mapf func(string, string) []KeyValue,
 
 	// Your worker implementation here.
 	for {
-		args := ATArgs{}
-		reply := ATReply{}
-		call("Coordinator.AssignTask", &args, &reply)
-		if reply.IsAllWorkDone {
+		atArgs := ATArgs{}
+		atReply := ATReply{}
+		call("Coordinator.AssignTask", &atArgs, &atReply)
+		if atReply.IsAllWorkDone {
 			break
 		}
-		fmt.Printf("%v\n", reply)
-		if !reply.IsTaskAssigned {
+		fmt.Printf("%v\n", atReply)
+		if !atReply.IsTaskAssigned {
 			time.Sleep(1 * time.Second)
+			continue
+		}
+		t := atReply.Task
+		if t.TaskType == MAP {
+			file, err := os.Open(t.File)
+			if err != nil {
+				log.Fatalf("cannot open %v", t.File)
+			}
+			content, err := ioutil.ReadAll(file)
+			if err != nil {
+				log.Fatalf("cannot read %v", t.File)
+			}
+			file.Close()
+			kva := mapf(t.File, string(content))
+			kvm := make(map[string][]KeyValue)
+			for _, kv := range kva {
+				rn := ihash(kv.Key)
+				imFile := fmt.Sprintf("mr-%d-%d", t.TaskNum, rn)
+				_, ok := kvm[imFile]
+				if !ok {
+					kvm[imFile] = []KeyValue{}
+				}
+				kvm[imFile] = append(kvm[imFile], kv)
+			}
+
+			tmpf2f := make(map[string]string)
+			isTaskDone := true
+			for imFile, kvma := range kvm {
+				tmpFile, err := ioutil.TempFile(".", imFile)
+				if err != nil {
+					log.Fatalf("cannot create temporary file for %s", imFile)
+					isTaskDone = false
+					break
+				}
+				tmpf2f[tmpFile.Name()] = imFile
+				enc := json.NewEncoder(tmpFile)
+				for _, kv := range kvma {
+					err := enc.Encode(&kv)
+					if err != nil {
+						log.Fatalf("cannot encode key valuse for %v", kv)
+						isTaskDone = false
+						break
+					}
+				}
+				tmpFile.Close()
+				if !isTaskDone {
+					break
+				}
+			}
+
+			atdArgs := ATDArgs{
+				IsTaskDone: isTaskDone,
+				Task:       t,
+			}
+			atdReply := ATDReply{}
+			call("Coordinator.AssignedTaskDone", &atdArgs, &atdReply)
+			if isTaskDone && atdReply.Committed {
+				for tmpf, f := range tmpf2f {
+					os.Rename(tmpf, f)
+				}
+			} else {
+				for tmpf, _ := range tmpf2f {
+					os.Remove(tmpf)
+				}
+			}
+		} else {
+			// TODO
 		}
 	}
 }
