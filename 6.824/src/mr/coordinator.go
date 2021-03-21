@@ -93,6 +93,7 @@ func (c *Coordinator) AssignedTaskDone(args *ATDArgs, reply *ATDReply) error {
 	if _, ok := ifTasks.Get(t.TaskNum); ok {
 		ifTasks.Remove(t.TaskNum)
 		reply.Committed = true
+		fmt.Println("Task %d committed", t.TaskNum)
 	} else {
 		reply.Committed = false
 	}

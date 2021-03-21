@@ -60,15 +60,14 @@ func Worker(mapf func(string, string) []KeyValue,
 			kva := mapf(t.File, string(content))
 			kvm := make(map[string][]KeyValue)
 			for _, kv := range kva {
-				rn := ihash(kv.Key)
-				imFile := fmt.Sprintf("mr-%d-%d", t.TaskNum, rn)
+				rn := ihash(kv.Key) % atReply.NReduce
+				imFile := fmt.Sprintf("mr-%s-%d", t.TaskNum, rn)
 				_, ok := kvm[imFile]
 				if !ok {
 					kvm[imFile] = []KeyValue{}
 				}
 				kvm[imFile] = append(kvm[imFile], kv)
 			}
-
 			tmpf2f := make(map[string]string)
 			isTaskDone := true
 			for imFile, kvma := range kvm {
@@ -83,7 +82,7 @@ func Worker(mapf func(string, string) []KeyValue,
 				for _, kv := range kvma {
 					err := enc.Encode(&kv)
 					if err != nil {
-						log.Fatalf("cannot encode key valuse for %v", kv)
+						log.Fatalf("cannot encode key value for %v", kv)
 						isTaskDone = false
 						break
 					}
