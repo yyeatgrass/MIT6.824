@@ -15,17 +15,17 @@ import "os"
 import "log"
 
 func init() {
-	if _, err := os.Stat("mrcoordinator.log"); err == nil {
-		os.Remove("mrcoordinator.log")
-	 }
+	// if _, err := os.Stat("mrcoordinator.log"); err == nil {
+	// 	os.Remove("mrcoordinator.log")
+	//  }
 
-	f, err := os.OpenFile("mrcoordinator.log", os.O_RDWR | os.O_CREATE | os.O_APPEND, 0666)
-	if err != nil {
-		return
-	}
+	// f, err := os.OpenFile("mrcoordinator.log", os.O_RDWR | os.O_CREATE | os.O_APPEND, 0666)
+	// if err != nil {
+	// 	return
+	// }
 
-	log.SetOutput(f)
-	log.Println("Log file for coordinator.")
+	// log.SetOutput(f)
+	// log.Println("Log file for coordinator.")
 }
 
 func main() {

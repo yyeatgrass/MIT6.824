@@ -41,7 +41,7 @@ func Worker(mapf func(string, string) []KeyValue,
 		if atReply.IsAllWorkDone {
 			break
 		}
-		fmt.Printf("%v\n", atReply)
+		log.Printf("%v\n", atReply)
 		if !atReply.IsTaskAssigned {
 			time.Sleep(1 * time.Second)
 			continue
@@ -133,6 +133,6 @@ func call(rpcname string, args interface{}, reply interface{}) bool {
 		return true
 	}
 
-	fmt.Println(err)
+	log.Println(err)
 	return false
 }
