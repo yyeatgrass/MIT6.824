@@ -39,7 +39,7 @@ func (c *Coordinator) AssignTask(args *ATArgs, reply *ATReply) error {
 		}
 		c.ifMapTasks.Set(mt.TaskNum, mt)
 		go func() {
-			time.Sleep(10*time.Second)
+			time.Sleep(10 * time.Second)
 			c.recycleChan <- mt
 		}()
 		return nil
@@ -57,7 +57,7 @@ func (c *Coordinator) AssignTask(args *ATArgs, reply *ATReply) error {
 		}
 		c.ifReduceTasks.Set(rt.TaskNum, rt)
 		go func() {
-			time.Sleep(10*time.Second)
+			time.Sleep(10 * time.Second)
 			c.recycleChan <- rt
 		}()
 		return nil
@@ -91,6 +91,16 @@ func (c *Coordinator) AssignedTaskDone(args *ATDArgs, reply *ATDReply) error {
 		ifTasks.Remove(t.TaskNum)
 		reply.Committed = true
 		log.Println("Task %d committed", t.TaskNum)
+		if t.TaskType == MAP && ifTasks.IsEmpty() && c.usMapTasks.Empty() {
+			for i := 0; i < c.nReduce; i++ {
+				c.usReduceTasks.Put(
+					&MrTask{
+						TaskType: REDUCE,
+						TaskNum:  strconv.Itoa(i),
+					},
+				)
+			}
+		}
 	} else {
 		reply.Committed = false
 	}
@@ -124,7 +134,7 @@ func (c *Coordinator) Done() bool {
 	// Your code here.
 	c.mu.Lock()
 	ret = c.usMapTasks.Empty() && c.usReduceTasks.Empty() &&
-			c.ifMapTasks.IsEmpty() && c.ifReduceTasks.IsEmpty()
+		c.ifMapTasks.IsEmpty() && c.ifReduceTasks.IsEmpty()
 	c.mu.Unlock()
 	return ret
 }
@@ -155,7 +165,7 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	log.Printf("usMapTasks: %v\n", c.usMapTasks)
 	go func() {
 		for c.Done() == false {
-			t := <- c.recycleChan
+			t := <-c.recycleChan
 			var ifTasks cmap.ConcurrentMap
 			var usTaskQueue *Queue
 			if t.TaskType == MAP {
