@@ -12,12 +12,25 @@ package main
 import "6.824/mr"
 import "time"
 import "os"
-import "fmt"
+import "log"
+
+func init() {
+	if _, err := os.Stat("mrcoordinator.log"); err == nil {
+		os.Remove("mrcoordinator.log")
+	 }
+
+	f, err := os.OpenFile("mrcoordinator.log", os.O_RDWR | os.O_CREATE | os.O_APPEND, 0666)
+	if err != nil {
+		return
+	}
+
+	log.SetOutput(f)
+	log.Println("Log file for coordinator.")
+}
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintf(os.Stderr, "Usage: mrcoordinator inputfiles...\n")
-		os.Exit(1)
+		log.Fatalln(os.Stderr, "Usage: mrcoordinator inputfiles...\n")
 	}
 
 	m := mr.MakeCoordinator(os.Args[1:], 10)

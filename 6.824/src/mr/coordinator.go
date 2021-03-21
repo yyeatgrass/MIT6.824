@@ -5,15 +5,12 @@ import "net"
 import "os"
 import "net/rpc"
 import "net/http"
-import "fmt"
 import . "github.com/yyeatgrass/go-datastructures/queue"
 import cmap "github.com/yyeatgrass/concurrent-map"
 import "time"
 import "sync"
 import "strconv"
 import "errors"
-
-
 
 type Coordinator struct {
 	// Your definitions here.
@@ -93,7 +90,7 @@ func (c *Coordinator) AssignedTaskDone(args *ATDArgs, reply *ATDReply) error {
 	if _, ok := ifTasks.Get(t.TaskNum); ok {
 		ifTasks.Remove(t.TaskNum)
 		reply.Committed = true
-		fmt.Println("Task %d committed", t.TaskNum)
+		log.Println("Task %d committed", t.TaskNum)
 	} else {
 		reply.Committed = false
 	}
@@ -155,7 +152,7 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 			},
 		)
 	}
-	fmt.Printf("usMapTasks: %v", c.usMapTasks)
+	log.Printf("usMapTasks: %v\n", c.usMapTasks)
 	go func() {
 		for c.Done() == false {
 			t := <- c.recycleChan
