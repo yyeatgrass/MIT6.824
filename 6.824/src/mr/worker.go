@@ -8,6 +8,7 @@ import "time"
 import "encoding/json"
 import "os"
 import "io/ioutil"
+import "regexp"
 
 //
 // Map functions return a slice of KeyValue.
@@ -110,6 +111,19 @@ func Worker(mapf func(string, string) []KeyValue,
 			}
 		} else {
 			// TODO
+			files, err := ioutil.ReadDir("./")
+			if err != nil {
+				log.Fatal(err)
+			}
+			rtNum := atReply.NReduce
+			reg := fmt.Sprintf("mr-.*-%d", rtNum)
+			for _, f := range files {
+				match, _ := regexp.MatchString(reg, f.Name())
+				if match {
+					// TODO
+					fmt.Printf(f.Name())
+				}
+			}
 		}
 	}
 }
