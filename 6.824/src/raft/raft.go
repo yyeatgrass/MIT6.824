@@ -26,7 +26,12 @@ import (
 	"6.824/labrpc"
 )
 
-
+type Role int
+const (
+	FOLLOWER  Role = 0
+	CANDIDATE Role = 1
+	LEADER    Role = 2
+)
 //
 // as each Raft peer becomes aware that successive log entries are
 // committed, the peer should send an ApplyMsg to the service (or
@@ -63,6 +68,7 @@ type Raft struct {
 	// Your data here (2A, 2B, 2C).
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
+	role      Role
 
 }
 
@@ -153,11 +159,23 @@ type RequestVoteReply struct {
 	// Your data here (2A).
 }
 
+type AppendEntriesArgs struct {
+
+}
+
+type AppendEntriesReply struct {
+
+}
+
 //
 // example RequestVote RPC handler.
 //
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
+}
+
+func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
+
 }
 
 //
