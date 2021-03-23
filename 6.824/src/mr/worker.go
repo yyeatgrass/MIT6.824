@@ -9,6 +9,7 @@ import "encoding/json"
 import "os"
 import "io/ioutil"
 import "regexp"
+import "sort"
 
 //
 // Map functions return a slice of KeyValue.
@@ -17,6 +18,14 @@ type KeyValue struct {
 	Key   string
 	Value string
 }
+
+// for sorting by key.
+type ByKey []KeyValue
+
+// for sorting by key.
+func (a ByKey) Len() int           { return len(a) }
+func (a ByKey) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+func (a ByKey) Less(i, j int) bool { return a[i].Key < a[j].Key }
 
 //
 // use ihash(key) % NReduce to choose the reduce
@@ -48,6 +57,8 @@ func Worker(mapf func(string, string) []KeyValue,
 			continue
 		}
 		t := atReply.Task
+		isTaskDone := true
+		tmpf2f := make(map[string]string)
 		if t.TaskType == MAP {
 			file, err := os.Open(t.File)
 			if err != nil {
@@ -69,8 +80,6 @@ func Worker(mapf func(string, string) []KeyValue,
 				}
 				kvm[imFile] = append(kvm[imFile], kv)
 			}
-			tmpf2f := make(map[string]string)
-			isTaskDone := true
 			for imFile, kvma := range kvm {
 				tmpFile, err := ioutil.TempFile(".", imFile)
 				if err != nil {
@@ -93,36 +102,65 @@ func Worker(mapf func(string, string) []KeyValue,
 					break
 				}
 			}
-
-			atdArgs := ATDArgs{
-				IsTaskDone: isTaskDone,
-				Task:       t,
-			}
-			atdReply := ATDReply{}
-			call("Coordinator.AssignedTaskDone", &atdArgs, &atdReply)
-			if isTaskDone && atdReply.Committed {
-				for tmpf, f := range tmpf2f {
-					os.Rename(tmpf, f)
-				}
-			} else {
-				for tmpf, _ := range tmpf2f {
-					os.Remove(tmpf)
-				}
-			}
 		} else {
 			// TODO
 			files, err := ioutil.ReadDir("./")
 			if err != nil {
 				log.Fatal(err)
 			}
-			rtNum := atReply.NReduce
-			reg := fmt.Sprintf("mr-.*-%d", rtNum)
-			for _, f := range files {
-				match, _ := regexp.MatchString(reg, f.Name())
+			rtNum := atReply.Task.TaskNum
+			reg := fmt.Sprintf("mr-.*-%s", rtNum)
+			kva := []KeyValue{}
+			for _, file := range files {
+				match, _ := regexp.MatchString(reg, file.Name())
 				if match {
 					// TODO
-					fmt.Printf(f.Name())
+					f, _ := os.Open(file.Name())
+					dec := json.NewDecoder(f)
+					for {
+						var kv KeyValue
+						if err := dec.Decode(&kv); err != nil {
+							break
+						}
+						kva = append(kva, kv)
+					}
 				}
+			}
+
+			outfileName := fmt.Sprintf("mr-out-%s", rtNum)
+			tmpFile, err := ioutil.TempFile(".", outfileName)
+			tmpf2f[tmpFile.Name()] = outfileName
+			sort.Sort(ByKey(kva))
+			i := 0
+			for i < len(kva) {
+				j := i + 1
+				for j < len(kva) && kva[j].Key == kva[i].Key {
+					j++
+				}
+				values := []string{}
+				for k := i; k < j; k++ {
+					values = append(values, kva[k].Value)
+				}
+				output := reducef(kva[i].Key, values)
+				// this is the correct format for each line of Reduce output.
+				fmt.Fprintf(tmpFile, "%v %v\n", kva[i].Key, output)
+				i = j
+			}
+			tmpFile.Close()
+		}
+		atdArgs := ATDArgs{
+			IsTaskDone: isTaskDone,
+			Task:       t,
+		}
+		atdReply := ATDReply{}
+		call("Coordinator.AssignedTaskDone", &atdArgs, &atdReply)
+		if isTaskDone && atdReply.Committed {
+			for tmpf, f := range tmpf2f {
+				os.Rename(tmpf, f)
+			}
+		} else {
+			for tmpf, _ := range tmpf2f {
+				os.Remove(tmpf)
 			}
 		}
 	}
