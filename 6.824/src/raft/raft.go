@@ -18,20 +18,22 @@ package raft
 //
 
 import (
-//	"bytes"
+	//	"bytes"
 	"sync"
 	"sync/atomic"
 
-//	"6.824/labgob"
+	//	"6.824/labgob"
 	"6.824/labrpc"
 )
 
 type Role int
+
 const (
 	FOLLOWER  Role = 0
 	CANDIDATE Role = 1
 	LEADER    Role = 2
 )
+
 //
 // as each Raft peer becomes aware that successive log entries are
 // committed, the peer should send an ApplyMsg to the service (or
@@ -55,6 +57,11 @@ type ApplyMsg struct {
 	SnapshotIndex int
 }
 
+type LogEntry struct {
+	Command interface{}
+	term    int
+}
+
 //
 // A Go object implementing a single Raft peer.
 //
@@ -68,8 +75,9 @@ type Raft struct {
 	// Your data here (2A, 2B, 2C).
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
-	role      Role
-
+	role Role
+	term int
+	log  []*LogEntry
 }
 
 // return currentTerm and whether this server
@@ -98,7 +106,6 @@ func (rf *Raft) persist() {
 	// rf.persister.SaveRaftState(data)
 }
 
-
 //
 // restore previously persisted state.
 //
@@ -121,7 +128,6 @@ func (rf *Raft) readPersist(data []byte) {
 	// }
 }
 
-
 //
 // A service wants to switch to snapshot.  Only do so if Raft hasn't
 // have more recent info since it communicate the snapshot on applyCh.
@@ -142,7 +148,6 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 
 }
 
-
 //
 // example RequestVote RPC arguments structure.
 // field names must start with capital letters!
@@ -160,11 +165,10 @@ type RequestVoteReply struct {
 }
 
 type AppendEntriesArgs struct {
-
+	entry LogEntry
 }
 
 type AppendEntriesReply struct {
-
 }
 
 //
@@ -212,6 +216,10 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 	return ok
 }
 
+func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
+	ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
+	return ok
+}
 
 //
 // the service using Raft (e.g. a k/v server) wants to start
@@ -233,8 +241,26 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	isLeader := true
 
 	// Your code here (2B).
-
-
+	if rf.role != LEADER {
+		isLeader = false
+	} else {
+		// TODO
+		newEntry := LogEntry{
+			Command: command,
+			term:    rf.term,
+		}
+		rf.log = append(rf.log, &newEntry)
+		for ind, _ := range rf.peers {
+			if ind == rf.me {
+				continue
+			}
+			args := AppendEntriesArgs{
+				entry: newEntry,
+			}
+			reply := AppendEntriesReply{}
+			go rf.sendAppendEntries(ind, &args, &reply)
+		}
+	}
 	return index, term, isLeader
 }
 
@@ -296,7 +322,6 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	// start ticker goroutine to start elections
 	go rf.ticker()
-
 
 	return rf
 }
