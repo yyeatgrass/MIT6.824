@@ -24,6 +24,8 @@ import (
 
 	//	"6.824/labgob"
 	"6.824/labrpc"
+	"math/rand"
+	"time"
 )
 
 type Role int
@@ -80,6 +82,7 @@ type Raft struct {
 	log         []LogEntry
 	commitIndex int
 	nextIndex   []int
+	hbChannel   chan bool
 }
 
 // return currentTerm and whether this server
@@ -194,6 +197,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		return
 	}
 
+	rf.hbChannel <- true
 	if len(rf.log) <= args.prevLogIndex {
 		reply.success = false
 		return
@@ -347,13 +351,34 @@ func (rf *Raft) killed() bool {
 // The ticker go routine starts a new election if this peer hasn't received
 // heartsbeats recently.
 func (rf *Raft) ticker() {
+	rand.Seed(time.Now().UnixNano())
 	for rf.killed() == false {
 
 		// Your code here to check if a leader election should
 		// be started and to randomize sleeping time using
 		// time.Sleep().
 
+		switch rf.role {
+		case LEADER:
+			// Send Out heartbeats
+		case FOLLOWER:
+			hbInterval := time.Duration(300+rand.Intn(200)) * time.Millisecond
+			for {
+				select {
+				case <-time.After(hbInterval):
+					rf.election()
+					break
+				case <-rf.hbChannel:
+					continue
+				}
+			}
+		}
+
 	}
+}
+
+func (rf *Raft) election() {
+
 }
 
 //
