@@ -75,9 +75,11 @@ type Raft struct {
 	// Your data here (2A, 2B, 2C).
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
-	role Role
-	term int
-	log  []*LogEntry
+	role        Role
+	term        int
+	log         []LogEntry
+	commitIndex int
+	nextIndex   []int
 }
 
 // return currentTerm and whether this server
@@ -165,10 +167,16 @@ type RequestVoteReply struct {
 }
 
 type AppendEntriesArgs struct {
-	entry LogEntry
+	entries      []LogEntry
+	prevLogIndex int
+	prevLogTerm  int
+	leaderCommit int
+	term         int
 }
 
 type AppendEntriesReply struct {
+	success bool
+	term    int
 }
 
 //
@@ -176,10 +184,32 @@ type AppendEntriesReply struct {
 //
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
+
 }
 
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
+	reply.term = rf.term
+	if args.term < rf.term {
+		reply.success = false
+		return
+	}
 
+	if len(rf.log) <= args.prevLogIndex {
+		reply.success = false
+		return
+	}
+
+	if args.prevLogIndex >= 0 && rf.log[args.prevLogIndex].term != args.prevLogTerm {
+		reply.success = false
+		return
+	}
+
+	if len(rf.log) > args.prevLogIndex+1 {
+		rf.log = rf.log[:args.prevLogIndex+1]
+	}
+	rf.log = append(rf.log, args.entries...)
+	rf.commitIndex = args.leaderCommit
+	reply.success = true
 }
 
 //
@@ -249,17 +279,46 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 			Command: command,
 			term:    rf.term,
 		}
-		rf.log = append(rf.log, &newEntry)
-		for ind, _ := range rf.peers {
-			if ind == rf.me {
+
+		rf.log = append(rf.log, newEntry)
+		rf.commitIndex += 1
+		for serverInd, _ := range rf.peers {
+			if serverInd == rf.me {
 				continue
 			}
-			args := AppendEntriesArgs{
-				entry: newEntry,
-			}
-			reply := AppendEntriesReply{}
-			go rf.sendAppendEntries(ind, &args, &reply)
+
+			go func() {
+				ok := false
+				nInd := rf.nextIndex[serverInd]
+				// if nInd == -1, that iteration must succeed
+				for {
+					var prevLogIndex int
+					var prevLogTerm int
+					prevLogIndex = nInd - 1
+					if prevLogIndex < 0 {
+						prevLogTerm = -1
+					} else {
+						prevLogTerm = rf.log[prevLogIndex].term
+					}
+					args := AppendEntriesArgs{
+						entries:      rf.log[nInd:],
+						prevLogIndex: prevLogIndex,
+						prevLogTerm:  prevLogTerm,
+						leaderCommit: rf.commitIndex,
+					}
+					reply := AppendEntriesReply{}
+					ok = rf.sendAppendEntries(serverInd, &args, &reply)
+					if ok == true {
+						break
+					} else {
+						nInd -= 1
+					}
+				}
+				rf.nextIndex[serverInd] = len(rf.log)
+			}()
 		}
+		index = len(rf.log) - 1
+		term = rf.term
 	}
 	return index, term, isLeader
 }
