@@ -198,6 +198,11 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	}
 
 	rf.hbChannel <- true
+	if len(args.entries) == 0 {
+		reply.success = true
+		return
+	}
+
 	if len(rf.log) <= args.prevLogIndex {
 		reply.success = false
 		return
@@ -361,11 +366,25 @@ func (rf *Raft) ticker() {
 		switch rf.role {
 		case LEADER:
 			// Send Out heartbeats
+			hbInterval := time.Duration(100) * time.Millisecond
+			time.Sleep(hbInterval)
+			for serverInd, _ := range rf.peers {
+				go func() {
+					args, reply := AppendEntriesArgs{}, AppendEntriesReply{}
+					rf.sendAppendEntries(serverInd, &args, &reply)
+					rf.mu.Lock()
+					if reply.term > rf.term {
+						rf.role = FOLLOWER
+						rf.term = reply.term
+					}
+					rf.mu.Unlock()
+				}()
+			}
 		case FOLLOWER:
-			hbInterval := time.Duration(300+rand.Intn(200)) * time.Millisecond
+			hbTimeout := time.Duration(300+rand.Intn(200)) * time.Millisecond
 			for {
 				select {
-				case <-time.After(hbInterval):
+				case <-time.After(hbTimeout):
 					rf.election()
 					break
 				case <-rf.hbChannel:
