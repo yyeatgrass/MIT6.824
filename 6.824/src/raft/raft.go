@@ -83,6 +83,7 @@ type Raft struct {
 	commitIndex int
 	nextIndex   []int
 	hbChannel   chan bool
+	votedFor     int
 }
 
 // return currentTerm and whether this server
@@ -194,7 +195,18 @@ type AppendEntriesReply struct {
 //
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
-
+	reply.Term = rf.term
+	if args.Term <= rf.term {
+		reply.VoteGranted = false
+		return
+	}
+	rf.mu.Lock()
+	rf.term = args.Term
+	rf.votedFor = args.CandidateId
+	rf.role = FOLLOWER
+	rf.mu.Unlock()
+	reply.VoteGranted = true
+	return
 }
 
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
@@ -407,15 +419,16 @@ func (rf *Raft) ticker() {
 
 func (rf *Raft) election() {
 	rf.mu.Lock()
-	defer rf.mu.Unlock()
 	rf.role = CANDIDATE
 	rf.term += 1
-	voteBox := make(chan int)
+	rf.votedFor = rf.me
+	rf.mu.Unlock()
+	replyBox := make(chan RequestVoteReply)
 	for serverInd, _ := range rf.peers {
 		if serverInd == rf.me {
 			continue
 		}
-		go func(server int) {
+		go func(rf Raft, server int) {
 			lastLogIndex := len(rf.log) - 1
 			var lastLogTerm int
 			if lastLogIndex >= 0 {
@@ -431,25 +444,26 @@ func (rf *Raft) election() {
 			}
 			reply := RequestVoteReply{}
 			rf.sendRequestVote(server, &args, &reply)
-			if reply.VoteGranted {
-				voteBox <- 1
-			} else {
-				voteBox <- 0
-			}
-		}(serverInd)
+			replyBox <- reply
+		}(*rf, serverInd)
 	}
 	reps, votes := 0, 1
-	for v := range voteBox {
-		votes += v
-		reps += 1
-		if votes > len(rf.peers)/2 || reps == len(rf.peers)-1 {
-			break
+	for reps < len(rf.peers) - 1 {
+		reply := <-replyBox
+		if reply.VoteGranted {
+			votes += 1
+		} else if reply.Term > rf.term {
+			rf.mu.Lock()
+			rf.role = FOLLOWER
+			rf.term = reply.Term
+			rf.votedFor = -1
+			rf.mu.Unlock()
 		}
 	}
-	if votes > len(rf.peers)/2 {
+	if rf.role == CANDIDATE && votes > len(rf.peers) / 2 {
+		rf.mu.Lock()
 		rf.role = LEADER
-	} else {
-		rf.role = FOLLOWER
+		rf.mu.Unlock()
 	}
 }
 
