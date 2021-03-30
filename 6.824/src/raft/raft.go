@@ -407,15 +407,15 @@ func (rf *Raft) ticker() {
 
 func (rf *Raft) election() {
 	rf.mu.Lock()
+	defer rf.mu.Unlock()
 	rf.role = CANDIDATE
 	rf.term += 1
-	rf.mu.Unlock()
 	voteBox := make(chan int)
 	for serverInd, _ := range rf.peers {
 		if serverInd == rf.me {
 			continue
 		}
-		go func() {
+		go func(server int) {
 			lastLogIndex := len(rf.log) - 1
 			var lastLogTerm int
 			if lastLogIndex >= 0 {
@@ -430,13 +430,13 @@ func (rf *Raft) election() {
 				LastLogTerm:  lastLogTerm,
 			}
 			reply := RequestVoteReply{}
-			rf.sendRequestVote(serverInd, &args, &reply)
+			rf.sendRequestVote(server, &args, &reply)
 			if reply.VoteGranted {
 				voteBox <- 1
 			} else {
 				voteBox <- 0
 			}
-		}()
+		}(serverInd)
 	}
 	reps, votes := 0, 1
 	for v := range voteBox {
