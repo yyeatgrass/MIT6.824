@@ -89,7 +89,11 @@ type Raft struct {
 // believes it is the leader.
 func (rf *Raft) GetState() (int, bool) {
 	// Your code here (2A).
-	return rf.term, rf.role == LEADER
+	rf.mu.Lock()
+	term := rf.term
+	role := rf.role
+	rf.mu.Unlock()
+	return term, role == LEADER
 }
 
 //
@@ -156,6 +160,10 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 //
 type RequestVoteArgs struct {
 	// Your data here (2A, 2B).
+	Term         int
+	CandidateId  int
+	LastLogIndex int
+	LastLogTerm  int
 }
 
 //
@@ -164,14 +172,16 @@ type RequestVoteArgs struct {
 //
 type RequestVoteReply struct {
 	// Your data here (2A).
+	Term        int
+	VoteGranted bool
 }
 
 type AppendEntriesArgs struct {
-	entries      []LogEntry
-	prevLogIndex int
-	prevLogTerm  int
-	leaderCommit int
-	term         int
+	Entries      []LogEntry
+	PrevLogIndex int
+	PrevLogTerm  int
+	LeaderCommit int
+	Term         int
 }
 
 type AppendEntriesReply struct {
@@ -189,32 +199,32 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	reply.term = rf.term
-	if args.term < rf.term {
+	if args.Term < rf.term {
 		reply.success = false
 		return
 	}
 
 	rf.hbChannel <- true
-	if len(args.entries) == 0 {
+	if len(args.Entries) == 0 {
 		reply.success = true
 		return
 	}
 
-	if len(rf.log) <= args.prevLogIndex {
+	if len(rf.log) <= args.PrevLogIndex {
 		reply.success = false
 		return
 	}
 
-	if args.prevLogIndex >= 0 && rf.log[args.prevLogIndex].term != args.prevLogTerm {
+	if args.PrevLogIndex >= 0 && rf.log[args.PrevLogIndex].term != args.PrevLogTerm {
 		reply.success = false
 		return
 	}
 
-	if len(rf.log) > args.prevLogIndex+1 {
-		rf.log = rf.log[:args.prevLogIndex+1]
+	if len(rf.log) > args.PrevLogIndex+1 {
+		rf.log = rf.log[:args.PrevLogIndex+1]
 	}
-	rf.log = append(rf.log, args.entries...)
-	rf.commitIndex = args.leaderCommit
+	rf.log = append(rf.log, args.Entries...)
+	rf.commitIndex = args.LeaderCommit
 	reply.success = true
 }
 
@@ -277,6 +287,8 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	isLeader := true
 
 	// Your code here (2B).
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
 	if rf.role != LEADER {
 		isLeader = false
 	} else {
@@ -307,10 +319,10 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 						prevLogTerm = rf.log[prevLogIndex].term
 					}
 					args := AppendEntriesArgs{
-						entries:      rf.log[nInd:],
-						prevLogIndex: prevLogIndex,
-						prevLogTerm:  prevLogTerm,
-						leaderCommit: rf.commitIndex,
+						Entries:      rf.log[nInd:],
+						PrevLogIndex: prevLogIndex,
+						PrevLogTerm:  prevLogTerm,
+						LeaderCommit: rf.commitIndex,
 					}
 					reply := AppendEntriesReply{}
 					ok = rf.sendAppendEntries(serverInd, &args, &reply)
@@ -394,7 +406,51 @@ func (rf *Raft) ticker() {
 }
 
 func (rf *Raft) election() {
-
+	rf.mu.Lock()
+	rf.role = CANDIDATE
+	rf.term += 1
+	rf.mu.Unlock()
+	voteBox := make(chan int)
+	for serverInd, _ := range rf.peers {
+		if serverInd == rf.me {
+			continue
+		}
+		go func() {
+			lastLogIndex := len(rf.log) - 1
+			var lastLogTerm int
+			if lastLogIndex >= 0 {
+				lastLogTerm = rf.log[lastLogIndex].term
+			} else {
+				lastLogTerm = -1
+			}
+			args := RequestVoteArgs{
+				Term:         rf.term,
+				CandidateId:  rf.me,
+				LastLogIndex: lastLogIndex,
+				LastLogTerm:  lastLogTerm,
+			}
+			reply := RequestVoteReply{}
+			rf.sendRequestVote(serverInd, &args, &reply)
+			if reply.VoteGranted {
+				voteBox <- 1
+			} else {
+				voteBox <- 0
+			}
+		}()
+	}
+	reps, votes := 0, 1
+	for v := range voteBox {
+		votes += v
+		reps += 1
+		if votes > len(rf.peers)/2 || reps == len(rf.peers)-1 {
+			break
+		}
+	}
+	if votes > len(rf.peers)/2 {
+		rf.role = LEADER
+	} else {
+		rf.role = FOLLOWER
+	}
 }
 
 //
