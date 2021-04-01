@@ -36,6 +36,11 @@ const (
 	LEADER    Role = 2
 )
 
+type RoleChangedInfo struct {
+	Role int
+	Term int
+}
+
 //
 // as each Raft peer becomes aware that successive log entries are
 // committed, the peer should send an ApplyMsg to the service (or
@@ -83,7 +88,7 @@ type Raft struct {
 	commitIndex int
 	nextIndex   []int
 	hbChannel   chan bool
-	votedFor     int
+	votedFor    int
 }
 
 // return currentTerm and whether this server
@@ -384,36 +389,39 @@ func (rf *Raft) ticker() {
 		// be started and to randomize sleeping time using
 		// time.Sleep().
 
-		switch rf.role {
-		case LEADER:
-			// Send Out heartbeats
-			hbInterval := time.Duration(100) * time.Millisecond
-			time.Sleep(hbInterval)
-			for serverInd, _ := range rf.peers {
-				go func() {
-					args, reply := AppendEntriesArgs{}, AppendEntriesReply{}
-					rf.sendAppendEntries(serverInd, &args, &reply)
-					rf.mu.Lock()
-					if reply.term > rf.term {
-						rf.role = FOLLOWER
-						rf.term = reply.term
-					}
-					rf.mu.Unlock()
-				}()
-			}
-		case FOLLOWER:
-			hbTimeout := time.Duration(300+rand.Intn(200)) * time.Millisecond
-			for {
-				select {
-				case <-time.After(hbTimeout):
-					rf.election()
-					break
-				case <-rf.hbChannel:
-					continue
-				}
-			}
-		}
-
+		// 	select {
+		// 	case e := :<-eventChan
+		// 		switch rf.role {
+		// 		case LEADER:
+		// 			for serverInd, _ := range rf.peers {
+		// 				go func() {
+		// 					args, reply := AppendEntriesArgs{}, AppendEntriesReply{}
+		// 					rf.sendAppendEntries(serverInd, &args, &reply)
+		// 					if reply.term > rf.term {
+		// 						roleChanged <- reply
+		// 					}
+		// 				}()
+		// 			}
+		// 		case FOLLOWER:
+		// 			rf.role = CANDIDATE
+		// 			rf.election()
+		// 		}
+		// 	case reply := <-roleChanged:
+		// 		switch {
+		// 		case:
+		// 			rf.role = FOLLOWER
+		// 			rf.term = reply.term
+		// 			close(eventChan)
+		// 			hbRecvTimeout := time.Duration(300+rand.Intn(200)) * time.Millisecond
+		// 			eventChan = time.After(hbRecvTimeout)
+		// 		case:
+		// 			rf.role = LEADER
+		// 			rf.term = reply.term
+		// 			close(eventChan)
+		// 			hbSendTimeout := time.Duration(100) * time.Millisecond
+		// 			eventChan = time.After(hbSendTimeout)
+		// 		}
+		// 	}
 	}
 }
 
@@ -448,7 +456,7 @@ func (rf *Raft) election() {
 		}(*rf, serverInd)
 	}
 	reps, votes := 0, 1
-	for reps < len(rf.peers) - 1 {
+	for reps < len(rf.peers)-1 {
 		reply := <-replyBox
 		if reply.VoteGranted {
 			votes += 1
@@ -460,7 +468,7 @@ func (rf *Raft) election() {
 			rf.mu.Unlock()
 		}
 	}
-	if rf.role == CANDIDATE && votes > len(rf.peers) / 2 {
+	if rf.role == CANDIDATE && votes > len(rf.peers)/2 {
 		rf.mu.Lock()
 		rf.role = LEADER
 		rf.mu.Unlock()
