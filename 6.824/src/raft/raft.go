@@ -24,6 +24,7 @@ import (
 
 	//	"6.824/labgob"
 	"6.824/labrpc"
+	"log"
 	"math/rand"
 	"time"
 )
@@ -37,9 +38,10 @@ const (
 )
 
 type RoleChangedInfo struct {
-	role     Role
-	term     int
-	votedFor int
+	role        Role
+	term        int
+	votedFor    int
+	isHeartBeat bool
 }
 
 //
@@ -66,8 +68,8 @@ type ApplyMsg struct {
 }
 
 type LogEntry struct {
-	command interface{}
-	term    int
+	Command interface{}
+	Term    int
 }
 
 //
@@ -88,7 +90,6 @@ type Raft struct {
 	log         []LogEntry
 	commitIndex int
 	nextIndex   []int
-	hbChannel   chan bool
 	votedFor    int
 
 	roleChanged chan RoleChangedInfo
@@ -102,6 +103,7 @@ func (rf *Raft) GetState() (int, bool) {
 	term := rf.term
 	role := rf.role
 	rf.mu.Unlock()
+	log.Printf("raft: %d, term: %d, role:%d, votedFor:%d", rf.me, term, role, rf.votedFor)
 	return term, role == LEADER
 }
 
@@ -194,8 +196,8 @@ type AppendEntriesArgs struct {
 }
 
 type AppendEntriesReply struct {
-	success bool
-	term    int
+	Success bool
+	Term    int
 }
 
 //
@@ -208,6 +210,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.mu.Unlock()
 	if args.Term <= reply.Term {
 		reply.VoteGranted = false
+		log.Println("vote not granted")
 		return
 	}
 	rf.roleChanged <- RoleChangedInfo{
@@ -216,29 +219,34 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		votedFor: args.CandidateId,
 	}
 	reply.VoteGranted = true
+	log.Println("vote granted")
 	return
 }
 
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
-	reply.term = rf.term
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	reply.Term = rf.term
 	if args.Term < rf.term {
-		reply.success = false
+		reply.Success = false
 		return
 	}
 
-	rf.hbChannel <- true
+	rf.roleChanged <- RoleChangedInfo{
+		isHeartBeat: true,
+	}
 	if len(args.Entries) == 0 {
-		reply.success = true
+		reply.Success = true
 		return
 	}
 
 	if len(rf.log) <= args.PrevLogIndex {
-		reply.success = false
+		reply.Success = false
 		return
 	}
 
-	if args.PrevLogIndex >= 0 && rf.log[args.PrevLogIndex].term != args.PrevLogTerm {
-		reply.success = false
+	if args.PrevLogIndex >= 0 && rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
+		reply.Success = false
 		return
 	}
 
@@ -247,7 +255,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	}
 	rf.log = append(rf.log, args.Entries...)
 	rf.commitIndex = args.LeaderCommit
-	reply.success = true
+	reply.Success = true
 }
 
 //
@@ -316,8 +324,8 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	} else {
 		// TODO
 		newEntry := LogEntry{
-			command: command,
-			term:    rf.term,
+			Command: command,
+			Term:    rf.term,
 		}
 
 		rf.log = append(rf.log, newEntry)
@@ -338,7 +346,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 					if prevLogIndex < 0 {
 						prevLogTerm = -1
 					} else {
-						prevLogTerm = rf.log[prevLogIndex].term
+						prevLogTerm = rf.log[prevLogIndex].Term
 					}
 					args := AppendEntriesArgs{
 						Entries:      rf.log[nInd:],
@@ -388,62 +396,83 @@ func (rf *Raft) killed() bool {
 // heartsbeats recently.
 func (rf *Raft) ticker() {
 	rand.Seed(time.Now().UnixNano())
+	hbRecvTimeout := time.Duration(300+rand.Intn(200)) * time.Millisecond
+	toChan := time.After(hbRecvTimeout)
 	for rf.killed() == false {
 
 		// Your code here to check if a leader election should
 		// be started and to randomize sleeping time using
 		// time.Sleep().
-		hbRecvTimeout := time.Duration(300+rand.Intn(200)) * time.Millisecond
-		toChan := time.After(hbRecvTimeout)
 		select {
 		case <-toChan:
 			switch rf.role {
 			case LEADER:
 				for serverInd, _ := range rf.peers {
-					go func(rf Raft, serverInd int) {
+					go func(rf *Raft, serverInd int) {
 						args, reply := AppendEntriesArgs{}, AppendEntriesReply{}
 						rf.sendAppendEntries(serverInd, &args, &reply)
-						if reply.term > rf.term {
+						if reply.Term > rf.term {
 							rf.roleChanged <- RoleChangedInfo{
 								role: FOLLOWER,
-								term: reply.term,
+								term: reply.Term,
 							}
 						}
-					}(*rf, serverInd)
+					}(rf, serverInd)
 				}
 			case FOLLOWER:
-				rf.election()
+				log.Println("aaaa")
+				rf.roleChanged <- RoleChangedInfo{
+					role:     CANDIDATE,
+					term:     rf.term + 1,
+					votedFor: rf.me,
+				}
+			case CANDIDATE:
+				log.Printf("eeeeee")
+				if rf.election() {
+					log.Println("Election success")
+					rf.roleChanged <- RoleChangedInfo{
+						role: LEADER,
+						term: rf.term,
+					}
+				} else {
+					log.Println("Election failure")
+					rf.roleChanged <- RoleChangedInfo{
+						role: FOLLOWER,
+					}
+				}
 			}
 		case rcInfo := <-rf.roleChanged:
-			rf.mu.Lock()
-			rf.term = rcInfo.term
-			if rcInfo.votedFor != -1 {
-				rf.votedFor = rcInfo.votedFor
+			log.Printf("bbbbb")
+			log.Printf("rc : %v", rcInfo)
+			if !rcInfo.isHeartBeat {
+				rf.mu.Lock()
+				defer rf.mu.Unlock()
+				rf.term = rcInfo.term
+				if rcInfo.votedFor != -1 {
+					rf.votedFor = rcInfo.votedFor
+				}
+				if rf.role == rcInfo.role {
+					break
+				}
+				rf.role = rcInfo.role
 			}
-			if rf.role == rcInfo.role {
-				break
-			}
-			rf.role = rcInfo.role
-			rf.mu.Unlock()
 			switch rf.role {
 			case FOLLOWER:
-				hbRecvTimeout := time.Duration(300+rand.Intn(200)) * time.Millisecond
+				hbRecvTimeout := time.Duration(100+rand.Intn(500)) * time.Millisecond
 				toChan = time.After(hbRecvTimeout)
 			case LEADER:
 				hbSendTimeout := time.Duration(100) * time.Millisecond
 				toChan = time.After(hbSendTimeout)
+			case CANDIDATE:
+				toChan = time.After(10 * time.Millisecond)
 			}
 		}
 	}
 }
 
-func (rf *Raft) election() {
-	rf.mu.Lock()
-	rf.role = CANDIDATE
-	rf.term += 1
-	rf.votedFor = rf.me
-	rf.mu.Unlock()
-	replyBox := make(chan RequestVoteReply)
+func (rf *Raft) election() bool {
+	replyBox := make(chan RequestVoteReply, len(rf.peers)-1)
+	log.Printf("1111")
 	for serverInd, _ := range rf.peers {
 		if serverInd == rf.me {
 			continue
@@ -452,7 +481,7 @@ func (rf *Raft) election() {
 			lastLogIndex := len(rf.log) - 1
 			var lastLogTerm int
 			if lastLogIndex >= 0 {
-				lastLogTerm = rf.log[lastLogIndex].term
+				lastLogTerm = rf.log[lastLogIndex].Term
 			} else {
 				lastLogTerm = -1
 			}
@@ -467,9 +496,12 @@ func (rf *Raft) election() {
 			replyBox <- reply
 		}(rf, serverInd)
 	}
+	log.Printf("2222")
 	reps, votes := 0, 1
 	for reps < len(rf.peers)-1 {
 		reply := <-replyBox
+		reps += 1
+		log.Printf("3333")
 		if reply.VoteGranted {
 			votes += 1
 		} else if reply.Term > rf.term {
@@ -477,15 +509,15 @@ func (rf *Raft) election() {
 				role: FOLLOWER,
 				term: reply.Term,
 			}
-			return
+			log.Printf("3333")
+			return false
 		}
 	}
+	log.Printf("4444")
 	if rf.role == CANDIDATE && votes > len(rf.peers)/2 {
-		rf.roleChanged <- RoleChangedInfo{
-			role: LEADER,
-			term: rf.term,
-		}
+		return true
 	}
+	return false
 }
 
 //
@@ -501,7 +533,12 @@ func (rf *Raft) election() {
 //
 func Make(peers []*labrpc.ClientEnd, me int,
 	persister *Persister, applyCh chan ApplyMsg) *Raft {
-	rf := &Raft{}
+	rf := &Raft{
+		role:        FOLLOWER,
+		term:        0,
+		votedFor:    -1,
+		roleChanged: make(chan RoleChangedInfo, 10),
+	}
 	rf.peers = peers
 	rf.persister = persister
 	rf.me = me
