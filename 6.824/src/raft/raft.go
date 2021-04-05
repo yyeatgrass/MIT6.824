@@ -412,7 +412,6 @@ func (rf *Raft) killed() bool {
 // The ticker go routine starts a new election if this peer hasn't received
 // heartsbeats recently.
 func (rf *Raft) ticker() {
-
 	var hbRecvTimeout, hbSendTimeout time.Duration
 	rand.Seed(time.Now().UnixNano())
 	hbRecvTimeout = time.Duration(300+rand.Intn(200)) * time.Millisecond
@@ -539,6 +538,7 @@ func (rf *Raft) election() bool {
 		reps += 1
 		if reply.VoteGranted {
 			votes += 1
+			break
 		} else if reply.Term > rf.term {
 			rf.roleChanged <- RoleChangedInfo{
 				role: FOLLOWER,
