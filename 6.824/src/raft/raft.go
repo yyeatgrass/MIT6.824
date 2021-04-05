@@ -29,6 +29,10 @@ import (
 	"time"
 )
 
+func init() {
+	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
+}
+
 type Role int
 
 const (
@@ -486,15 +490,15 @@ func (rf *Raft) ticker() {
 
 			switch rf.role {
 			case FOLLOWER:
-				log.Printf("Use random hb recieve time. rf: %d", rf.me)
-				hbRecvTimeout := time.Duration(100+rand.Intn(500)) * time.Millisecond
+				hbRecvTimeout := time.Duration(300+rand.Intn(200)) * time.Millisecond
+				log.Printf("Use random hb recieve time. rf: %d, time: %d ms", rf.me, hbRecvTimeout)
 				toChan = time.After(hbRecvTimeout)
 			case LEADER:
-				log.Println("Use random hb send out time.")
 				hbSendTimeout := time.Duration(100) * time.Millisecond
+				log.Printf("Use random hb send out time. rf: %d, time: %d ms", rf.me, hbSendTimeout)
 				toChan = time.After(hbSendTimeout)
 			case CANDIDATE:
-				log.Println("Use candidate timeout.")
+				log.Printf("Use candidate timeout.")
 				toChan = time.After(10 * time.Millisecond)
 			}
 		}
