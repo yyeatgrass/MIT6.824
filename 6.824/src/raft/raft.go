@@ -38,10 +38,9 @@ const (
 )
 
 type RoleChangedInfo struct {
-	role        Role
-	term        int
-	votedFor    int
-	isHeartBeat bool
+	role     Role
+	term     int
+	votedFor int
 }
 
 //
@@ -100,9 +99,11 @@ type Raft struct {
 func (rf *Raft) GetState() (int, bool) {
 	// Your code here (2A).
 	rf.mu.Lock()
+	log.Printf("rf %d getstate acquire lock success", rf.me)
 	term := rf.term
 	role := rf.role
 	rf.mu.Unlock()
+	log.Printf("rf %d getstate release lock success", rf.me)
 	log.Printf("raft: %d, term: %d, role:%d, votedFor:%d", rf.me, term, role, rf.votedFor)
 	return term, role == LEADER
 }
@@ -206,8 +207,10 @@ type AppendEntriesReply struct {
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
 	rf.mu.Lock()
+	log.Printf("rf %d requestVote acquire lock success", rf.me)
 	reply.Term = rf.term
 	rf.mu.Unlock()
+	log.Printf("rf %d requestVote release lock success", rf.me)
 	if args.Term <= reply.Term {
 		reply.VoteGranted = false
 		log.Println("vote not granted")
@@ -226,36 +229,42 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+	log.Printf("rf %d appendEntries acquire lock success", rf.me)
+	//	defer rf.mu.Unlock()
 	reply.Term = rf.term
 	if args.Term < rf.term {
+		log.Printf("rf %d term %d reject appending from rf %d term %d because the term is stale.", rf.me, rf.term, args.LeaderCommit, args.Term)
 		reply.Success = false
 		return
 	}
 
 	rf.roleChanged <- RoleChangedInfo{
-		isHeartBeat: true,
+		role: FOLLOWER,
+		term: args.Term,
 	}
 	if len(args.Entries) == 0 {
 		reply.Success = true
 		return
 	}
 
-	if len(rf.log) <= args.PrevLogIndex {
-		reply.Success = false
-		return
-	}
+	// log.Printf("rf %d appendEntries release lock success", rf.me)
 
-	if args.PrevLogIndex >= 0 && rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
-		reply.Success = false
-		return
-	}
+	// if len(rf.log) <= args.PrevLogIndex {
+	// 	reply.Success = false
+	// 	return
+	// }
 
-	if len(rf.log) > args.PrevLogIndex+1 {
-		rf.log = rf.log[:args.PrevLogIndex+1]
-	}
-	rf.log = append(rf.log, args.Entries...)
-	rf.commitIndex = args.LeaderCommit
-	reply.Success = true
+	// if args.PrevLogIndex >= 0 && rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
+	// 	reply.Success = false
+	// 	return
+	// }
+
+	// if len(rf.log) > args.PrevLogIndex+1 {
+	// 	rf.log = rf.log[:args.PrevLogIndex+1]
+	// }
+	// rf.log = append(rf.log, args.Entries...)
+	// rf.commitIndex = args.LeaderCommit
+	// reply.Success = true
 }
 
 //
@@ -318,7 +327,8 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 
 	// Your code here (2B).
 	rf.mu.Lock()
-	defer rf.mu.Unlock()
+	log.Printf("rf %d Start acquire lock success", rf.me)
+	//	defer rf.mu.Unlock()
 	if rf.role != LEADER {
 		isLeader = false
 	} else {
@@ -368,6 +378,9 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		index = len(rf.log) - 1
 		term = rf.term
 	}
+	rf.mu.Unlock()
+	log.Printf("rf %d Start release lock success", rf.me)
+
 	return index, term, isLeader
 }
 
@@ -407,27 +420,33 @@ func (rf *Raft) ticker() {
 		case <-toChan:
 			switch rf.role {
 			case LEADER:
+				log.Println("Send out hbs.")
 				for serverInd, _ := range rf.peers {
-					go func(rf *Raft, serverInd int) {
-						args, reply := AppendEntriesArgs{}, AppendEntriesReply{}
+					if serverInd == rf.me {
+						continue
+					}
+					go func(rf *Raft, term int, leaderInd int, serverInd int) {
+						args := AppendEntriesArgs{
+							LeaderCommit: leaderInd,
+							Term:         term,
+						}
+						reply := AppendEntriesReply{}
 						rf.sendAppendEntries(serverInd, &args, &reply)
-						if reply.Term > rf.term {
+						if reply.Term > term {
 							rf.roleChanged <- RoleChangedInfo{
 								role: FOLLOWER,
 								term: reply.Term,
 							}
 						}
-					}(rf, serverInd)
+					}(rf, rf.term, rf.me, serverInd)
 				}
 			case FOLLOWER:
-				log.Println("aaaa")
 				rf.roleChanged <- RoleChangedInfo{
 					role:     CANDIDATE,
 					term:     rf.term + 1,
 					votedFor: rf.me,
 				}
 			case CANDIDATE:
-				log.Printf("eeeeee")
 				if rf.election() {
 					log.Println("Election success")
 					rf.roleChanged <- RoleChangedInfo{
@@ -442,28 +461,40 @@ func (rf *Raft) ticker() {
 				}
 			}
 		case rcInfo := <-rf.roleChanged:
-			log.Printf("bbbbb")
-			log.Printf("rc : %v", rcInfo)
-			if !rcInfo.isHeartBeat {
-				rf.mu.Lock()
-				defer rf.mu.Unlock()
-				rf.term = rcInfo.term
-				if rcInfo.votedFor != -1 {
-					rf.votedFor = rcInfo.votedFor
-				}
-				if rf.role == rcInfo.role {
-					break
-				}
-				rf.role = rcInfo.role
+			log.Printf("rf: %d, rc : %v", rf.me, rcInfo)
+			if rcInfo.role == LEADER {
+				log.Println("Change role to leader, try to acquire lock.")
 			}
+			log.Printf("rf %d rolechanged try to acquire lock success", rf.me)
+			rf.mu.Lock()
+			log.Printf("rf %d rolechanged acquire lock success", rf.me)
+			if rcInfo.role == LEADER {
+				log.Println("Change role to leader, acquire lock succeeds.")
+			}
+			if rf.role != rcInfo.role {
+				rf.role = rcInfo.role
+				if rf.role == LEADER {
+					log.Println("I am a leader.")
+				}
+			}
+			rf.term = rcInfo.term
+			if rcInfo.votedFor != -1 {
+				rf.votedFor = rcInfo.votedFor
+			}
+			rf.mu.Unlock()
+			log.Printf("rf %d rolechanged release lock success", rf.me)
+
 			switch rf.role {
 			case FOLLOWER:
+				log.Printf("Use random hb recieve time. rf: %d", rf.me)
 				hbRecvTimeout := time.Duration(100+rand.Intn(500)) * time.Millisecond
 				toChan = time.After(hbRecvTimeout)
 			case LEADER:
+				log.Println("Use random hb send out time.")
 				hbSendTimeout := time.Duration(100) * time.Millisecond
 				toChan = time.After(hbSendTimeout)
 			case CANDIDATE:
+				log.Println("Use candidate timeout.")
 				toChan = time.After(10 * time.Millisecond)
 			}
 		}
@@ -472,7 +503,6 @@ func (rf *Raft) ticker() {
 
 func (rf *Raft) election() bool {
 	replyBox := make(chan RequestVoteReply, len(rf.peers)-1)
-	log.Printf("1111")
 	for serverInd, _ := range rf.peers {
 		if serverInd == rf.me {
 			continue
@@ -496,12 +526,10 @@ func (rf *Raft) election() bool {
 			replyBox <- reply
 		}(rf, serverInd)
 	}
-	log.Printf("2222")
 	reps, votes := 0, 1
 	for reps < len(rf.peers)-1 {
 		reply := <-replyBox
 		reps += 1
-		log.Printf("3333")
 		if reply.VoteGranted {
 			votes += 1
 		} else if reply.Term > rf.term {
@@ -509,11 +537,9 @@ func (rf *Raft) election() bool {
 				role: FOLLOWER,
 				term: reply.Term,
 			}
-			log.Printf("3333")
 			return false
 		}
 	}
-	log.Printf("4444")
 	if rf.role == CANDIDATE && votes > len(rf.peers)/2 {
 		return true
 	}
