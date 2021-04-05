@@ -412,8 +412,10 @@ func (rf *Raft) killed() bool {
 // The ticker go routine starts a new election if this peer hasn't received
 // heartsbeats recently.
 func (rf *Raft) ticker() {
+
+	var hbRecvTimeout, hbSendTimeout time.Duration
 	rand.Seed(time.Now().UnixNano())
-	hbRecvTimeout := time.Duration(300+rand.Intn(200)) * time.Millisecond
+	hbRecvTimeout = time.Duration(300+rand.Intn(200)) * time.Millisecond
 	toChan := time.After(hbRecvTimeout)
 	for rf.killed() == false {
 
@@ -444,6 +446,7 @@ func (rf *Raft) ticker() {
 						}
 					}(rf, rf.term, rf.me, serverInd)
 				}
+				toChan = time.After(hbSendTimeout)
 			case FOLLOWER:
 				rf.roleChanged <- RoleChangedInfo{
 					role:     CANDIDATE,
@@ -490,11 +493,11 @@ func (rf *Raft) ticker() {
 
 			switch rf.role {
 			case FOLLOWER:
-				hbRecvTimeout := time.Duration(300+rand.Intn(200)) * time.Millisecond
+				hbRecvTimeout = time.Duration(300+rand.Intn(200)) * time.Millisecond
 				log.Printf("Use random hb recieve time. rf: %d, time: %d ms", rf.me, hbRecvTimeout)
 				toChan = time.After(hbRecvTimeout)
 			case LEADER:
-				hbSendTimeout := time.Duration(100) * time.Millisecond
+				hbSendTimeout = time.Duration(100+rand.Intn(100)) * time.Millisecond
 				log.Printf("Use random hb send out time. rf: %d, time: %d ms", rf.me, hbSendTimeout)
 				toChan = time.After(hbSendTimeout)
 			case CANDIDATE:
