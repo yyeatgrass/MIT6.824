@@ -513,7 +513,7 @@ func (rf *Raft) election() bool {
 		if serverInd == rf.me {
 			continue
 		}
-		go func(rf *Raft, server int) {
+		go func(rf *Raft, term int, candidateId int, server int) {
 			lastLogIndex := len(rf.log) - 1
 			var lastLogTerm int
 			if lastLogIndex >= 0 {
@@ -522,32 +522,41 @@ func (rf *Raft) election() bool {
 				lastLogTerm = -1
 			}
 			args := RequestVoteArgs{
-				Term:         rf.term,
-				CandidateId:  rf.me,
+				Term:         term,
+				CandidateId:  candidateId,
 				LastLogIndex: lastLogIndex,
 				LastLogTerm:  lastLogTerm,
 			}
 			reply := RequestVoteReply{}
 			rf.sendRequestVote(server, &args, &reply)
 			replyBox <- reply
-		}(rf, serverInd)
+		}(rf, rf.term, rf.me, serverInd)
 	}
+
+	electTimeOut := time.After(300 * time.Millisecond)
 	reps, votes := 0, 1
 	for reps < len(rf.peers)-1 {
-		reply := <-replyBox
-		reps += 1
-		if reply.VoteGranted {
-			votes += 1
-			break
-		} else if reply.Term > rf.term {
-			rf.roleChanged <- RoleChangedInfo{
-				role: FOLLOWER,
-				term: reply.Term,
+		select {
+		case reply := <-replyBox:
+			reps += 1
+			if reply.VoteGranted {
+				votes += 1
+				break
 			}
-			return false
+			if reply.Term > rf.term {
+				rf.roleChanged <- RoleChangedInfo{
+					role: FOLLOWER,
+					term: reply.Term,
+				}
+				return false
+			}
+		case <-electTimeOut:
+			goto FINISH
 		}
 	}
-	if rf.role == CANDIDATE && votes > len(rf.peers)/2 {
+
+FINISH:
+	if votes > len(rf.peers)/2 {
 		return true
 	}
 	return false
