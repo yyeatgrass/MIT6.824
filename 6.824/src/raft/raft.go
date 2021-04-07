@@ -24,6 +24,7 @@ import (
 
 	//	"6.824/labgob"
 	"6.824/labrpc"
+	"fmt"
 	"log"
 	"math/rand"
 	"time"
@@ -103,12 +104,12 @@ type Raft struct {
 func (rf *Raft) GetState() (int, bool) {
 	// Your code here (2A).
 	rf.mu.Lock()
-	log.Printf("rf %d getstate acquire lock success", rf.me)
+	rf.Log("getstate acquire lock success")
 	term := rf.term
 	role := rf.role
 	rf.mu.Unlock()
-	log.Printf("rf %d getstate release lock success", rf.me)
-	log.Printf("raft: %d, term: %d, role:%d, votedFor:%d", rf.me, term, role, rf.votedFor)
+	rf.Log("getstate release lock success")
+	rf.Log("raft:%d, term:%d, role:%d, votedFor:%d", rf.me, term, role, rf.votedFor)
 	return term, role == LEADER
 }
 
@@ -211,13 +212,13 @@ type AppendEntriesReply struct {
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
 	rf.mu.Lock()
-	log.Printf("rf %d requestVote acquire lock success", rf.me)
+	rf.Log("requestVote acquire lock success")
 	reply.Term = rf.term
 	rf.mu.Unlock()
-	log.Printf("rf %d requestVote release lock success", rf.me)
+	rf.Log("requestVote release lock success")
 	if args.Term <= reply.Term {
 		reply.VoteGranted = false
-		log.Println("vote not granted")
+		rf.Log("vote not granted")
 		return
 	}
 	rf.roleChanged <- RoleChangedInfo{
@@ -226,18 +227,18 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		votedFor: args.CandidateId,
 	}
 	reply.VoteGranted = true
-	log.Println("vote granted")
+	rf.Log("vote granted")
 	return
 }
 
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	log.Printf("rf %d appendEntries acquire lock success", rf.me)
+	rf.Log("appendEntries acquire lock success")
 	//	defer rf.mu.Unlock()
 	reply.Term = rf.term
 	if args.Term < rf.term {
-		log.Printf("rf %d term %d reject appending from rf %d term %d because the term is stale.", rf.me, rf.term, args.LeaderCommit, args.Term)
+		rf.Log("rf %d term %d reject appending from rf %d term %d because the term is stale.", rf.me, rf.term, args.LeaderCommit, args.Term)
 		reply.Success = false
 		return
 	}
@@ -251,7 +252,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		return
 	}
 
-	// log.Printf("rf %d appendEntries release lock success", rf.me)
+	// rf.Log("rf %d appendEntries release lock success", rf.me)
 
 	// if len(rf.log) <= args.PrevLogIndex {
 	// 	reply.Success = false
@@ -331,7 +332,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 
 	// Your code here (2B).
 	rf.mu.Lock()
-	log.Printf("rf %d Start acquire lock success", rf.me)
+	rf.Log("Start acquire lock success")
 	//	defer rf.mu.Unlock()
 	if rf.role != LEADER {
 		isLeader = false
@@ -383,7 +384,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		term = rf.term
 	}
 	rf.mu.Unlock()
-	log.Printf("rf %d Start release lock success", rf.me)
+	rf.Log("Start release lock success")
 
 	return index, term, isLeader
 }
@@ -425,7 +426,7 @@ func (rf *Raft) ticker() {
 		case <-toChan:
 			switch rf.role {
 			case LEADER:
-				log.Println("Send out hbs.")
+				rf.Log("Send out hbs.")
 				for serverInd, _ := range rf.peers {
 					if serverInd == rf.me {
 						continue
@@ -454,33 +455,33 @@ func (rf *Raft) ticker() {
 				}
 			case CANDIDATE:
 				if rf.election() {
-					log.Println("Election success")
+					rf.Log("Election success")
 					rf.roleChanged <- RoleChangedInfo{
 						role: LEADER,
 						term: rf.term,
 					}
 				} else {
-					log.Println("Election failure")
+					rf.Log("Election failure")
 					rf.roleChanged <- RoleChangedInfo{
 						role: FOLLOWER,
 					}
 				}
 			}
 		case rcInfo := <-rf.roleChanged:
-			log.Printf("rf: %d, rc : %v", rf.me, rcInfo)
+			rf.Log("rc : %v", rcInfo)
 			if rcInfo.role == LEADER {
-				log.Println("Change role to leader, try to acquire lock.")
+				rf.Log("Change role to leader, try to acquire lock.")
 			}
-			log.Printf("rf %d rolechanged try to acquire lock success", rf.me)
+			rf.Log("rolechanged try to acquire lock success")
 			rf.mu.Lock()
-			log.Printf("rf %d rolechanged acquire lock success", rf.me)
+			rf.Log("rolechanged acquire lock success")
 			if rcInfo.role == LEADER {
-				log.Println("Change role to leader, acquire lock succeeds.")
+				rf.Log("Change role to leader, acquire lock succeeds.")
 			}
 			if rf.role != rcInfo.role {
 				rf.role = rcInfo.role
 				if rf.role == LEADER {
-					log.Println("I am a leader.")
+					rf.Log("I am a leader.")
 				}
 			}
 			rf.term = rcInfo.term
@@ -488,19 +489,19 @@ func (rf *Raft) ticker() {
 				rf.votedFor = rcInfo.votedFor
 			}
 			rf.mu.Unlock()
-			log.Printf("rf %d rolechanged release lock success", rf.me)
+			rf.Log("rolechanged release lock success")
 
 			switch rf.role {
 			case FOLLOWER:
 				hbRecvTimeout = time.Duration(300+rand.Intn(200)) * time.Millisecond
-				log.Printf("Use random hb recieve time. rf: %d, time: %d ms", rf.me, hbRecvTimeout)
+				rf.Log("Use random hb recieve time, time: %d ms", hbRecvTimeout)
 				toChan = time.After(hbRecvTimeout)
 			case LEADER:
 				hbSendTimeout = time.Duration(100+rand.Intn(100)) * time.Millisecond
-				log.Printf("Use random hb send out time. rf: %d, time: %d ms", rf.me, hbSendTimeout)
+				rf.Log("Use random hb send out time, time: %d ms", hbSendTimeout)
 				toChan = time.After(hbSendTimeout)
 			case CANDIDATE:
-				log.Printf("Use candidate timeout.")
+				rf.Log("Use candidate timeout.")
 				toChan = time.After(10 * time.Millisecond)
 			}
 		}
@@ -560,6 +561,16 @@ FINISH:
 		return true
 	}
 	return false
+}
+
+// Add Log for debugable log
+func (rf *Raft) Log(format string, args ...interface{}) {
+	raftFmt := fmt.Sprintf("[rfId=%d] %s", rf.me, format)
+	if len(args) > 0 {
+		log.Printf(raftFmt, args...)
+	} else {
+		log.Println(raftFmt)
+	}
 }
 
 //
