@@ -252,24 +252,24 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		return
 	}
 
-	// rf.Log("rf %d appendEntries release lock success", rf.me)
+	rf.Log("rf %d appendEntries release lock success", rf.me)
 
-	// if len(rf.log) <= args.PrevLogIndex {
-	// 	reply.Success = false
-	// 	return
-	// }
+	if len(rf.log) <= args.PrevLogIndex {
+		reply.Success = false
+		return
+	}
 
-	// if args.PrevLogIndex >= 0 && rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
-	// 	reply.Success = false
-	// 	return
-	// }
+	if args.PrevLogIndex >= 0 && rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
+		reply.Success = false
+		return
+	}
 
-	// if len(rf.log) > args.PrevLogIndex+1 {
-	// 	rf.log = rf.log[:args.PrevLogIndex+1]
-	// }
-	// rf.log = append(rf.log, args.Entries...)
-	// rf.commitIndex = args.LeaderCommit
-	// reply.Success = true
+	if len(rf.log) > args.PrevLogIndex+1 {
+		rf.log = rf.log[:args.PrevLogIndex+1]
+	}
+	rf.log = append(rf.log, args.Entries...)
+	rf.commitIndex = args.LeaderCommit
+	reply.Success = true
 }
 
 //
@@ -591,6 +591,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 		term:        0,
 		votedFor:    -1,
 		roleChanged: make(chan RoleChangedInfo, 10),
+		nextIndex:   make([]int, len(peers)),
 	}
 	rf.peers = peers
 	rf.persister = persister
