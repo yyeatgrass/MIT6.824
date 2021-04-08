@@ -104,11 +104,9 @@ type Raft struct {
 func (rf *Raft) GetState() (int, bool) {
 	// Your code here (2A).
 	rf.mu.Lock()
-	rf.Log("getstate acquire lock success")
 	term := rf.term
 	role := rf.role
 	rf.mu.Unlock()
-	rf.Log("getstate release lock success")
 	rf.Log("raft:%d, term:%d, role:%d, votedFor:%d", rf.me, term, role, rf.votedFor)
 	return term, role == LEADER
 }
@@ -212,10 +210,8 @@ type AppendEntriesReply struct {
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
 	rf.mu.Lock()
-	rf.Log("requestVote acquire lock success")
 	reply.Term = rf.term
 	rf.mu.Unlock()
-	rf.Log("requestVote release lock success")
 	if args.Term <= reply.Term {
 		reply.VoteGranted = false
 		rf.Log("vote not granted")
@@ -234,7 +230,6 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	rf.Log("appendEntries acquire lock success")
 	//	defer rf.mu.Unlock()
 	reply.Term = rf.term
 	if args.Term < rf.term {
@@ -251,8 +246,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		reply.Success = true
 		return
 	}
-
-	rf.Log("rf %d appendEntries release lock success", rf.me)
 
 	if len(rf.log) <= args.PrevLogIndex {
 		reply.Success = false
@@ -332,7 +325,6 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 
 	// Your code here (2B).
 	rf.mu.Lock()
-	rf.Log("Start acquire lock success")
 	//	defer rf.mu.Unlock()
 	if rf.role != LEADER {
 		isLeader = false
@@ -384,7 +376,6 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		term = rf.term
 	}
 	rf.mu.Unlock()
-	rf.Log("Start release lock success")
 
 	return index, term, isLeader
 }
@@ -469,15 +460,7 @@ func (rf *Raft) ticker() {
 			}
 		case rcInfo := <-rf.roleChanged:
 			rf.Log("rc : %v", rcInfo)
-			if rcInfo.role == LEADER {
-				rf.Log("Change role to leader, try to acquire lock.")
-			}
-			rf.Log("rolechanged try to acquire lock success")
 			rf.mu.Lock()
-			rf.Log("rolechanged acquire lock success")
-			if rcInfo.role == LEADER {
-				rf.Log("Change role to leader, acquire lock succeeds.")
-			}
 			if rf.role != rcInfo.role {
 				rf.role = rcInfo.role
 				if rf.role == LEADER {
@@ -489,7 +472,6 @@ func (rf *Raft) ticker() {
 				rf.votedFor = rcInfo.votedFor
 			}
 			rf.mu.Unlock()
-			rf.Log("rolechanged release lock success")
 
 			switch rf.role {
 			case FOLLOWER:
