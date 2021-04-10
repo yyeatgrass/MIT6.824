@@ -439,6 +439,7 @@ func (cfg *config) nCommitted(index int) (int, interface{}) {
 
 		cfg.mu.Lock()
 		cmd1, ok := cfg.logs[i][index]
+		log.Printf("raft %d log entry on index %d, cmd %v", i, index, cmd1)
 		cfg.mu.Unlock()
 
 		if ok {
