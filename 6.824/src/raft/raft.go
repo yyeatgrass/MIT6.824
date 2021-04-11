@@ -570,7 +570,7 @@ FINISH:
 
 // Add Log for debugable log
 func (rf *Raft) Log(format string, args ...interface{}) {
-	raftFmt := fmt.Sprintf("[rfId=%d] %s", rf.me, format)
+	raftFmt := fmt.Sprintf("[rfId=%d role=%s] %s", rf.me, RaftRoleToString(rf.role), format)
 	if len(args) > 0 {
 		log.Printf(raftFmt, args...)
 	} else {
