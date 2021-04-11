@@ -195,6 +195,7 @@ type AppendEntriesArgs struct {
 	Entries      []LogEntry
 	PrevLogIndex int
 	PrevLogTerm  int
+	LeaderId     int
 	LeaderCommit int
 	Term         int
 }
@@ -233,7 +234,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	//	defer rf.mu.Unlock()
 	reply.Term = rf.term
 	if args.Term < rf.term {
-		rf.Log("rf %d term %d reject appending from rf %d term %d because the term is stale.", rf.me, rf.term, args.LeaderCommit, args.Term)
+		rf.Log("rf %d term %d reject appending from rf %d term %d because the term is stale.", rf.me, rf.term, args.LeaderId, args.Term)
 		reply.Success = false
 		return
 	}
@@ -354,6 +355,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 
 		go func(serverInd int) {
 			ok := false
+			rf.Log("rf.nextIndex : %v", rf.nextIndex)
 			nInd := rf.nextIndex[serverInd]
 			// if nInd == -1, that iteration must succeed
 			for {
@@ -366,13 +368,14 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 					prevLogTerm = rf.log[prevLogIndex].Term
 				}
 				rf.Log("nInd : %d, len : %d", nInd, len(rf.log))
-				rf.Log("log entries: %v, from nInd %v", rf.log, rf.log[nInd:])
+				rf.Log("log entries: %v\n, from nInd %v", rf.log, rf.log[nInd:])
 
 				args := AppendEntriesArgs{
 					Entries:      rf.log[nInd:],
 					PrevLogIndex: prevLogIndex,
 					PrevLogTerm:  prevLogTerm,
 					LeaderCommit: rf.commitIndex,
+					LeaderId:     rf.me,
 					Term:         rf.term,
 				}
 
@@ -391,7 +394,6 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	index = len(rf.log) - 1
 	term = rf.term
 
-	log.Println("11111")
 	rf.applyCh <- ApplyMsg{
 		CommandValid: true,
 		Command:      command,
@@ -445,6 +447,7 @@ func (rf *Raft) ticker() {
 					go func(rf *Raft, term int, leaderInd int, serverInd int) {
 						args := AppendEntriesArgs{
 							LeaderCommit: leaderInd,
+							LeaderId:     rf.me,
 							Term:         term,
 						}
 						reply := AppendEntriesReply{}
@@ -495,7 +498,7 @@ func (rf *Raft) ticker() {
 
 			switch rf.role {
 			case FOLLOWER:
-				hbRecvTimeout = time.Duration(300+rand.Intn(200)) * time.Millisecond
+				hbRecvTimeout = time.Duration(400+rand.Intn(200)) * time.Millisecond
 				rf.Log("Use random hb recieve time, time: %d ms", hbRecvTimeout)
 				toChan = time.After(hbRecvTimeout)
 			case LEADER:
