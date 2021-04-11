@@ -213,11 +213,14 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.mu.Lock()
 	reply.Term = rf.term
 	rf.mu.Unlock()
-	if args.Term <= reply.Term {
+	if args.Term <= reply.Term ||
+		(len(rf.log) > 0 && (args.LastLogTerm < rf.log[len(rf.log) - 1].Term ||
+								  (args.LastLogTerm == rf.log[len(rf.log) - 1].Term && args.LastLogIndex <  len(rf.log) - 1))) {
 		reply.VoteGranted = false
 		rf.Log("vote not granted")
 		return
 	}
+
 	rf.roleChanged <- RoleChangedInfo{
 		role:     FOLLOWER,
 		term:     args.Term,
@@ -234,7 +237,8 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	//	defer rf.mu.Unlock()
 	reply.Term = rf.term
 	if args.Term < rf.term {
-		rf.Log("rf %d term %d reject appending from rf %d term %d because the term is stale.", rf.me, rf.term, args.LeaderId, args.Term)
+		rf.Log("rf %d term %d reject appending from rf %d term %d because the term is stale. Entries in args: %v",
+		        rf.me, rf.term, args.LeaderId, args.Term, args.Entries)
 		reply.Success = false
 		return
 	}
@@ -346,8 +350,8 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		Term:    rf.term,
 	}
 
-	rf.log = append(rf.log, newEntry)
-	rf.commitIndex += 1
+	progressChan := make(chan bool, len(rf.peers) - 1)
+	taskQuit := make(chan bool, 1)
 	for serverInd, _ := range rf.peers {
 		if serverInd == rf.me {
 			continue
@@ -359,6 +363,10 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 			nInd := rf.nextIndex[serverInd]
 			// if nInd == -1, that iteration must succeed
 			for {
+				if nInd == -1 {
+					taskQuit <- true
+					return
+				}
 				var prevLogIndex int
 				var prevLogTerm int
 				prevLogIndex = nInd - 1
@@ -371,7 +379,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 				rf.Log("log entries: %v\n, from nInd %v", rf.log, rf.log[nInd:])
 
 				args := AppendEntriesArgs{
-					Entries:      rf.log[nInd:],
+					Entries:      append(rf.log[nInd:], newEntry),
 					PrevLogIndex: prevLogIndex,
 					PrevLogTerm:  prevLogTerm,
 					LeaderCommit: rf.commitIndex,
@@ -383,6 +391,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 				reply := AppendEntriesReply{}
 				ok = rf.sendAppendEntries(serverInd, &args, &reply)
 				if ok == true {
+					progressChan <- true
 					break
 				} else {
 					nInd -= 1
@@ -391,14 +400,35 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 			rf.nextIndex[serverInd] = len(rf.log)
 		}(serverInd)
 	}
+
+	progress := 0
+	for {
+		select {
+		case <-progressChan:
+			progress += 1
+			if progress == len(rf.peers) - 1 {
+				goto SUCCEED
+			}
+		case <-taskQuit:
+			index = -1
+			term = rf.term
+			isLeader = false
+			goto END
+		}
+	}
+
+SUCCEED:
+	rf.log = append(rf.log, newEntry)
+	rf.commitIndex += 1
+
 	index = len(rf.log) - 1
 	term = rf.term
-
 	rf.applyCh <- ApplyMsg{
 		CommandValid: true,
 		Command:      command,
 		CommandIndex: index,
 	}
+END:
 	return index, term, isLeader
 }
 
@@ -549,7 +579,7 @@ func (rf *Raft) election() bool {
 				votes += 1
 				break
 			}
-			if reply.Term > rf.term {
+			if reply.Term >= rf.term {
 				rf.roleChanged <- RoleChangedInfo{
 					role: FOLLOWER,
 					term: reply.Term,
