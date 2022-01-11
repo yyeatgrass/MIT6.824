@@ -350,74 +350,62 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		Term:    rf.term,
 	}
 
-	progressChan := make(chan bool, len(rf.peers) - 1)
-	taskQuit := make(chan bool, 1)
+
+	rf.Log("Number of peers: %v\n", len(rf.peers))
+	progress := 0
 	for serverInd, _ := range rf.peers {
 		if serverInd == rf.me {
 			continue
 		}
 
-		go func(serverInd int) {
-			ok := false
-			rf.Log("rf.nextIndex : %v", rf.nextIndex)
-			nInd := rf.nextIndex[serverInd]
-			// if nInd == -1, that iteration must succeed
-			for {
-				if nInd == -1 {
-					taskQuit <- true
-					return
-				}
-				var prevLogIndex int
-				var prevLogTerm int
-				prevLogIndex = nInd - 1
-				if prevLogIndex < 0 {
-					prevLogTerm = -1
-				} else {
-					prevLogTerm = rf.log[prevLogIndex].Term
-				}
-				rf.Log("nInd : %d, len : %d", nInd, len(rf.log))
-				rf.Log("log entries: %v\n, from nInd %v", rf.log, rf.log[nInd:])
-
-				args := AppendEntriesArgs{
-					Entries:      append(rf.log[nInd:], newEntry),
-					PrevLogIndex: prevLogIndex,
-					PrevLogTerm:  prevLogTerm,
-					LeaderCommit: rf.commitIndex,
-					LeaderId:     rf.me,
-					Term:         rf.term,
-				}
-
-				rf.Log("args:%v", args)
-				reply := AppendEntriesReply{}
-				ok = rf.sendAppendEntries(serverInd, &args, &reply)
-				if ok == true {
-					progressChan <- true
-					break
-				} else {
-					nInd -= 1
-				}
+		ok := false
+		rf.Log("rf.nextIndex : %v", rf.nextIndex)
+		nInd := rf.nextIndex[serverInd]
+		// if nInd == -1, that iteration must succeed
+		for {
+			if nInd == -1 {
+				break
 			}
-			rf.nextIndex[serverInd] = len(rf.log)
-		}(serverInd)
-	}
-
-	progress := 0
-	for {
-		select {
-		case <-progressChan:
-			progress += 1
-			if progress == len(rf.peers) - 1 {
-				goto SUCCEED
+			var prevLogIndex int
+			var prevLogTerm int
+			prevLogIndex = nInd - 1
+			if prevLogIndex < 0 {
+				prevLogTerm--
+			} else {
+				prevLogTerm = rf.log[prevLogIndex].Term
 			}
-		case <-taskQuit:
-			index = -1
-			term = rf.term
-			isLeader = false
-			goto END
+			rf.Log("nInd : %d, len : %d", nInd, len(rf.log))
+			rf.Log("log entries: %v\n, from nInd %v", rf.log, rf.log[nInd:])
+
+			args := AppendEntriesArgs{
+				Entries:      append(rf.log[nInd:], newEntry),
+				PrevLogIndex: prevLogIndex,
+				PrevLogTerm:  prevLogTerm,
+				LeaderCommit: rf.commitIndex,
+				LeaderId:     rf.me,
+				Term:         rf.term,
+			}
+
+			rf.Log("args:%v", args)
+			reply := AppendEntriesReply{}
+			ok = rf.sendAppendEntries(serverInd, &args, &reply)
+			if ok == true {
+				progress++
+				break
+			} else {
+				nInd--
+			}
 		}
+		rf.nextIndex[serverInd] = len(rf.log)
 	}
 
-SUCCEED:
+	if progress < len(rf.peers) - 1 {
+		index = -1
+		term = rf.term
+		isLeader = false
+		goto END
+	}
+
 	rf.log = append(rf.log, newEntry)
 	rf.commitIndex += 1
 
