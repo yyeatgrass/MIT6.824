@@ -235,6 +235,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	//	defer rf.mu.Unlock()
+	rf.Log("here entries: %v", rf.log)
 	reply.Term = rf.term
 	if args.Term < rf.term {
 		rf.Log("rf %d term %d reject appending from rf %d term %d because the term is stale. Entries in args: %v",
@@ -350,9 +351,9 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		Term:    rf.term,
 	}
 
-
 	rf.Log("Number of peers: %v\n", len(rf.peers))
-	progress := 0
+	rf.Log("Leader's log entries %v\n", rf.log)
+	progress := 1
 	for serverInd, _ := range rf.peers {
 		if serverInd == rf.me {
 			continue
@@ -391,15 +392,15 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 			ok = rf.sendAppendEntries(serverInd, &args, &reply)
 			if ok == true {
 				progress++
+				rf.nextIndex[serverInd] = len(rf.log)
 				break
 			} else {
 				nInd--
 			}
 		}
-		rf.nextIndex[serverInd] = len(rf.log)
 	}
 
-	if progress < len(rf.peers) - 1 {
+	if progress <= len(rf.peers) / 2 {
 		index = -1
 		term = rf.term
 		isLeader = false
