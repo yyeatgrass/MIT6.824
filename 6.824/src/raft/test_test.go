@@ -134,7 +134,7 @@ func TestBasicAgree2B(t *testing.T) {
 		}
 
 		xindex := cfg.one(index*100, servers, false)
-		if xindex != index-1 {
+		if xindex != index {
 			t.Fatalf("got index %v but expected %v", xindex, index)
 		}
 	}
@@ -161,7 +161,7 @@ func TestRPCBytes2B(t *testing.T) {
 	for index := 2; index < iters+2; index++ {
 		cmd := randstring(5000)
 		xindex := cfg.one(cmd, servers, false)
-		if xindex != index - 1 {
+		if xindex != index {
 			t.Fatalf("got index %v but expected %v", xindex, index)
 		}
 		sent += int64(len(cmd))

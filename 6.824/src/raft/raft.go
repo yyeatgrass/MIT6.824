@@ -95,6 +95,8 @@ type Raft struct {
 	commitIndex int
 	nextIndex   []int
 	votedFor    int
+	tmpEntries  []LogEntry
+	receivers   []*AppendEntriesArgs
 	roleChanged chan RoleChangedInfo
 	applyCh     chan ApplyMsg
 }
@@ -198,6 +200,7 @@ type AppendEntriesArgs struct {
 	LeaderId     int
 	LeaderCommit int
 	Term         int
+	Phase        int
 }
 
 type AppendEntriesReply struct {
@@ -235,6 +238,24 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	//	defer rf.mu.Unlock()
+
+	if args.Phase == 2 {
+		if len(rf.log) > args.PrevLogIndex+1 {
+			rf.log = rf.log[:args.PrevLogIndex+1]
+		}
+
+		rf.log = append(rf.log, rf.tmpEntries...)
+		rf.commitIndex = args.LeaderCommit
+		for i, entry := range rf.tmpEntries {
+			rf.applyCh <- ApplyMsg{
+				CommandValid: true,
+				Command:      entry.Command,
+				CommandIndex: args.PrevLogIndex + i + 1,
+			}
+		}
+		return
+	}
+
 	rf.Log("here entries: %v", rf.log)
 	reply.Term = rf.term
 	if args.Term < rf.term {
@@ -264,19 +285,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		return
 	}
 
-	if len(rf.log) > args.PrevLogIndex+1 {
-		rf.log = rf.log[:args.PrevLogIndex+1]
-	}
-	rf.log = append(rf.log, args.Entries...)
-	rf.Log("rf log entries: %v", rf.log)
-	rf.commitIndex = args.LeaderCommit
-	for i, entry := range args.Entries {
-		rf.applyCh <- ApplyMsg{
-			CommandValid: true,
-			Command:      entry.Command,
-			CommandIndex: args.PrevLogIndex + i + 1,
-		}
-	}
+	rf.tmpEntries = args.Entries
 	reply.Success = true
 }
 
@@ -378,6 +387,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 			rf.Log("nInd : %d, len : %d", nInd, len(rf.log))
 			rf.Log("log entries: %v\n, from nInd %v", rf.log, rf.log[nInd:])
 
+			// 1st phase
 			args := AppendEntriesArgs{
 				Entries:      append(rf.log[nInd:], newEntry),
 				PrevLogIndex: prevLogIndex,
@@ -385,14 +395,16 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 				LeaderCommit: rf.commitIndex,
 				LeaderId:     rf.me,
 				Term:         rf.term,
+				Phase:        1,
 			}
 
 			rf.Log("args:%v", args)
 			reply := AppendEntriesReply{}
 			ok = rf.sendAppendEntries(serverInd, &args, &reply)
-			if ok == true {
+			if ok {
 				progress++
-				rf.nextIndex[serverInd] = len(rf.log)
+				rf.Log("1st phase succeed:%v", args)
+				rf.receivers[serverInd] = &args
 				break
 			} else {
 				nInd--
@@ -401,10 +413,24 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	}
 
 	if progress <= len(rf.peers) / 2 {
-		index = -1
+		index = len(rf.log)
 		term = rf.term
-		isLeader = false
+		isLeader = true
 		goto END
+	}
+
+	// 2nd phrase
+	for serverInd, args := range rf.receivers {
+		if args == nil {
+			continue
+		}
+		args.Phase = 2
+		reply := AppendEntriesReply{}
+		ok := rf.sendAppendEntries(serverInd, args, &reply)
+		if ok {
+			rf.Log("2nd phase succeed:%v", args)
+			rf.nextIndex[serverInd] = len(rf.log)
+		}
 	}
 
 	rf.log = append(rf.log, newEntry)
@@ -417,7 +443,9 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		Command:      command,
 		CommandIndex: index,
 	}
+
 END:
+	rf.receivers = make([]*AppendEntriesArgs, len(rf.peers))
 	return index, term, isLeader
 }
 
@@ -503,13 +531,17 @@ func (rf *Raft) ticker() {
 		case rcInfo := <-rf.roleChanged:
 			rf.Log("rc : %v", rcInfo)
 			rf.mu.Lock()
+			rf.term = rcInfo.term
 			if rf.role != rcInfo.role {
 				rf.role = rcInfo.role
 				if rf.role == LEADER {
 					rf.Log("I am a leader.")
+					rf.log = append(rf.log, LogEntry{
+						Command: "",
+						Term:    rf.term,
+					})
 				}
 			}
-			rf.term = rcInfo.term
 			if rcInfo.votedFor != -1 {
 				rf.votedFor = rcInfo.votedFor
 			}
@@ -621,6 +653,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.peers = peers
 	rf.persister = persister
 	rf.me = me
+	rf.receivers = make([]*AppendEntriesArgs, len(rf.peers))
 
 	// Your initialization code here (2A, 2B, 2C).
 
