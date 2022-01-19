@@ -89,16 +89,17 @@ type Raft struct {
 	// Your data here (2A, 2B, 2C).
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
-	role        Role
-	term        int
-	log         []LogEntry
-	commitIndex int
-	nextIndex   []int
-	votedFor    int
-	tmpEntries  []LogEntry
-	receivers   []*AppendEntriesArgs
-	roleChanged chan RoleChangedInfo
-	applyCh     chan ApplyMsg
+	role              Role
+	term              int
+	log               []LogEntry
+	commitIndex       int
+	nextIndex         []int
+	votedFor          int
+	tmpEntries        []LogEntry
+	tmpPrevLogIndex   int
+	receivers         []int
+	roleChanged       chan RoleChangedInfo
+	applyCh           chan ApplyMsg
 }
 
 // return currentTerm and whether this server
@@ -200,12 +201,19 @@ type AppendEntriesArgs struct {
 	LeaderId     int
 	LeaderCommit int
 	Term         int
-	Phase        int
 }
 
 type AppendEntriesReply struct {
 	Success bool
 	Term    int
+}
+
+type CommitArgs struct {
+
+}
+
+type CommitReply struct {
+
 }
 
 //
@@ -237,24 +245,6 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	//	defer rf.mu.Unlock()
-
-	if args.Phase == 2 {
-		if len(rf.log) > args.PrevLogIndex+1 {
-			rf.log = rf.log[:args.PrevLogIndex+1]
-		}
-
-		rf.log = append(rf.log, rf.tmpEntries...)
-		rf.commitIndex = args.LeaderCommit
-		for i, entry := range rf.tmpEntries {
-			rf.applyCh <- ApplyMsg{
-				CommandValid: true,
-				Command:      entry.Command,
-				CommandIndex: args.PrevLogIndex + i + 1,
-			}
-		}
-		return
-	}
 
 	rf.Log("here entries: %v", rf.log)
 	reply.Term = rf.term
@@ -285,8 +275,35 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		return
 	}
 
+	if args.LeaderCommit > rf.commitIndex {
+		if args.LeaderCommit > len(rf.log) - 1 {
+			rf.commitIndex = len(rf.log) - 1
+		} else {
+			rf.commitIndex = args.LeaderCommit
+		}
+	}
+	rf.tmpPrevLogIndex = args.PrevLogIndex
 	rf.tmpEntries = args.Entries
 	reply.Success = true
+}
+
+func (rf *Raft) CommitEntries(args *CommitArgs, reply *CommitReply) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	if len(rf.log) > rf.tmpPrevLogIndex+1 {
+		rf.log = rf.log[:rf.tmpPrevLogIndex+1]
+	}
+
+	rf.log = append(rf.log, rf.tmpEntries...)
+	rf.commitIndex += len(rf.tmpEntries)
+	for i, entry := range rf.tmpEntries {
+		rf.applyCh <- ApplyMsg{
+			CommandValid: true,
+			Command:      entry.Command,
+			CommandIndex: rf.tmpPrevLogIndex + i + 1,
+		}
+	}
+	return
 }
 
 //
@@ -328,6 +345,10 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 	return ok
 }
 
+func (rf *Raft) sendCommit(server int, args *CommitArgs, reply *CommitReply) bool {
+	ok := rf.peers[server].Call("Raft.CommitEntries", args, reply)
+	return ok
+}
 //
 // the service using Raft (e.g. a k/v server) wants to start
 // agreement on the next command to be appended to Raft's log. if this
@@ -395,7 +416,6 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 				LeaderCommit: rf.commitIndex,
 				LeaderId:     rf.me,
 				Term:         rf.term,
-				Phase:        1,
 			}
 
 			rf.Log("args:%v", args)
@@ -404,7 +424,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 			if ok {
 				progress++
 				rf.Log("1st phase succeed:%v", args)
-				rf.receivers[serverInd] = &args
+				rf.receivers = append(rf.receivers, serverInd)
 				break
 			} else {
 				nInd--
@@ -420,15 +440,10 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	}
 
 	// 2nd phrase
-	for serverInd, args := range rf.receivers {
-		if args == nil {
-			continue
-		}
-		args.Phase = 2
-		reply := AppendEntriesReply{}
-		ok := rf.sendAppendEntries(serverInd, args, &reply)
+	for _, serverInd := range rf.receivers {
+		ok := rf.sendCommit(serverInd, &CommitArgs{}, &CommitReply{})
 		if ok {
-			rf.Log("2nd phase succeed:%v", args)
+			rf.Log("2nd phase succeed")
 			rf.nextIndex[serverInd] = len(rf.log)
 		}
 	}
@@ -445,7 +460,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	}
 
 END:
-	rf.receivers = make([]*AppendEntriesArgs, len(rf.peers))
+	rf.receivers = []int{}
 	return index, term, isLeader
 }
 
@@ -537,7 +552,7 @@ func (rf *Raft) ticker() {
 				if rf.role == LEADER {
 					rf.Log("I am a leader.")
 					rf.log = append(rf.log, LogEntry{
-						Command: "",
+						Command: "no-op",
 						Term:    rf.term,
 					})
 				}
@@ -653,7 +668,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.peers = peers
 	rf.persister = persister
 	rf.me = me
-	rf.receivers = make([]*AppendEntriesArgs, len(rf.peers))
+	rf.receivers = []int{}
 
 	// Your initialization code here (2A, 2B, 2C).
 
