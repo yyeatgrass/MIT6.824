@@ -424,6 +424,13 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 					rf.receivers = append(rf.receivers, serverInd)
 					break
 				} else {
+					if reply.Term > rf.term {
+						rf.roleChanged <- RoleChangedInfo{
+							role: FOLLOWER,
+							term: reply.Term,
+						}
+						break
+					}
 					nInd--
 				}
 			} else {
@@ -542,12 +549,14 @@ func (rf *Raft) ticker() {
 					rf.Log("Election failure")
 					rf.roleChanged <- RoleChangedInfo{
 						role: FOLLOWER,
+						term: rf.term,
 					}
 				}
 			}
 		case rcInfo := <-rf.roleChanged:
 			rf.mu.Lock()
 			rf.term = rcInfo.term
+			rf.Log("rf.term become %v", rf.term)
 			if rf.role != rcInfo.role {
 				rf.role = rcInfo.role
 				if rf.role == LEADER {
