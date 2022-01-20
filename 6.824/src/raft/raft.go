@@ -222,8 +222,9 @@ type CommitReply struct {
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
 	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
 	reply.Term = rf.term
-	rf.mu.Unlock()
 	if args.Term <= reply.Term ||
 		(len(rf.log) > 0 && (args.LastLogTerm < rf.log[len(rf.log) - 1].Term ||
 								  (args.LastLogTerm == rf.log[len(rf.log) - 1].Term && args.LastLogIndex <  len(rf.log) - 1))) {
@@ -246,7 +247,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	rf.Log("entries before append: %v", rf.log)
 	reply.Term = rf.term
 	if args.Term < rf.term {
 		rf.Log("rf %d term %d reject appending from rf %d term %d because the term is stale. Entries in args: %v",
@@ -259,11 +259,14 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		role: FOLLOWER,
 		term: args.Term,
 	}
-	rf.Log("args entries to be appended: %v", args.Entries)
+
 	if len(args.Entries) == 0 {
 		reply.Success = true
 		return
 	}
+
+	rf.Log("entries before append: %v", rf.log)
+	rf.Log("args entries to be appended: %v", args.Entries)
 
 	if len(rf.log) <= args.PrevLogIndex {
 		reply.Success = false
@@ -275,13 +278,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		return
 	}
 
-	if args.LeaderCommit > rf.commitIndex {
-		if args.LeaderCommit > len(rf.log) - 1 {
-			rf.commitIndex = len(rf.log) - 1
-		} else {
-			rf.commitIndex = args.LeaderCommit
-		}
-	}
 	rf.tmpPrevLogIndex = args.PrevLogIndex
 	rf.tmpEntries = args.Entries
 	reply.Success = true
@@ -295,7 +291,7 @@ func (rf *Raft) CommitEntries(args *CommitArgs, reply *CommitReply) {
 	}
 
 	rf.log = append(rf.log, rf.tmpEntries...)
-	rf.commitIndex += len(rf.tmpEntries)
+	rf.commitIndex = len(rf.log) - 1
 	for i, entry := range rf.tmpEntries {
 		rf.applyCh <- ApplyMsg{
 			CommandValid: true,
@@ -381,6 +377,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		Term:    rf.term,
 	}
 
+	rf.Log("The command %v\n", command)
 	rf.Log("Number of peers: %v\n", len(rf.peers))
 	rf.Log("Leader's log entries %v\n", rf.log)
 	progress := 1
@@ -422,12 +419,16 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 			reply := AppendEntriesReply{}
 			ok = rf.sendAppendEntries(serverInd, &args, &reply)
 			if ok {
-				progress++
-//				rf.Log("1st phase succeed:%v", args)
-				rf.receivers = append(rf.receivers, serverInd)
-				break
+				if reply.Success {
+					progress++
+					rf.receivers = append(rf.receivers, serverInd)
+					break
+				} else {
+					nInd--
+				}
 			} else {
-				nInd--
+				// RPC failure
+				break
 			}
 		}
 	}
@@ -444,20 +445,22 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		ok := rf.sendCommit(serverInd, &CommitArgs{}, &CommitReply{})
 		if ok {
 //			rf.Log("2nd phase succeed")
-			rf.nextIndex[serverInd] = len(rf.log)
+			rf.nextIndex[serverInd] = len(rf.log) + 1
 		}
 	}
 
 	rf.log = append(rf.log, newEntry)
-	rf.commitIndex += 1
-
 	index = len(rf.log) - 1
 	term = rf.term
-	rf.applyCh <- ApplyMsg{
-		CommandValid: true,
-		Command:      command,
-		CommandIndex: index,
+
+	for i := rf.commitIndex + 1; i < len(rf.log); i++ {
+		rf.applyCh <- ApplyMsg{
+			CommandValid: true,
+			Command:      rf.log[i].Command,
+			CommandIndex: i,
+		}
 	}
+	rf.commitIndex = len(rf.log) - 1
 
 END:
 	rf.receivers = []int{}
@@ -501,7 +504,6 @@ func (rf *Raft) ticker() {
 		case <-toChan:
 			switch rf.role {
 			case LEADER:
-//				rf.Log("Send out hbs.")
 				for serverInd, _ := range rf.peers {
 					if serverInd == rf.me {
 						continue
@@ -544,7 +546,6 @@ func (rf *Raft) ticker() {
 				}
 			}
 		case rcInfo := <-rf.roleChanged:
-//			rf.Log("rc : %v", rcInfo)
 			rf.mu.Lock()
 			rf.term = rcInfo.term
 			if rf.role != rcInfo.role {
@@ -568,14 +569,11 @@ func (rf *Raft) ticker() {
 			switch rf.role {
 			case FOLLOWER:
 				hbRecvTimeout = time.Duration(400+rand.Intn(200)) * time.Millisecond
-//				rf.Log("Use random hb recieve time, time: %d ms", hbRecvTimeout)
 				toChan = time.After(hbRecvTimeout)
 			case LEADER:
 				hbSendTimeout = time.Duration(100+rand.Intn(100)) * time.Millisecond
-//				rf.Log("Use random hb send out time, time: %d ms", hbSendTimeout)
 				toChan = time.After(hbSendTimeout)
 			case CANDIDATE:
-//				rf.Log("Use candidate timeout.")
 				toChan = time.After(10 * time.Millisecond)
 			}
 		}
