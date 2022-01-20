@@ -107,9 +107,9 @@ type Raft struct {
 func (rf *Raft) GetState() (int, bool) {
 	// Your code here (2A).
 	rf.mu.Lock()
+	defer rf.mu.Unlock()
 	term := rf.term
 	role := rf.role
-	rf.mu.Unlock()
 	rf.Log("raft:%d, term:%d, role:%d, votedFor:%d", rf.me, term, role, rf.votedFor)
 	return term, role == LEADER
 }
@@ -246,7 +246,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	rf.Log("here entries: %v", rf.log)
+	rf.Log("entries before append: %v", rf.log)
 	reply.Term = rf.term
 	if args.Term < rf.term {
 		rf.Log("rf %d term %d reject appending from rf %d term %d because the term is stale. Entries in args: %v",
@@ -259,7 +259,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		role: FOLLOWER,
 		term: args.Term,
 	}
-	rf.Log("args entries: %v", args.Entries)
+	rf.Log("args entries to be appended: %v", args.Entries)
 	if len(args.Entries) == 0 {
 		reply.Success = true
 		return
@@ -423,7 +423,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 			ok = rf.sendAppendEntries(serverInd, &args, &reply)
 			if ok {
 				progress++
-				rf.Log("1st phase succeed:%v", args)
+//				rf.Log("1st phase succeed:%v", args)
 				rf.receivers = append(rf.receivers, serverInd)
 				break
 			} else {
@@ -443,7 +443,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	for _, serverInd := range rf.receivers {
 		ok := rf.sendCommit(serverInd, &CommitArgs{}, &CommitReply{})
 		if ok {
-			rf.Log("2nd phase succeed")
+//			rf.Log("2nd phase succeed")
 			rf.nextIndex[serverInd] = len(rf.log)
 		}
 	}
@@ -501,7 +501,7 @@ func (rf *Raft) ticker() {
 		case <-toChan:
 			switch rf.role {
 			case LEADER:
-				rf.Log("Send out hbs.")
+//				rf.Log("Send out hbs.")
 				for serverInd, _ := range rf.peers {
 					if serverInd == rf.me {
 						continue
@@ -544,7 +544,7 @@ func (rf *Raft) ticker() {
 				}
 			}
 		case rcInfo := <-rf.roleChanged:
-			rf.Log("rc : %v", rcInfo)
+//			rf.Log("rc : %v", rcInfo)
 			rf.mu.Lock()
 			rf.term = rcInfo.term
 			if rf.role != rcInfo.role {
@@ -555,6 +555,9 @@ func (rf *Raft) ticker() {
 						Command: "no-op",
 						Term:    rf.term,
 					})
+					for server, _ := range rf.peers {
+						rf.nextIndex[server] = len(rf.log) - 1
+					}
 				}
 			}
 			if rcInfo.votedFor != -1 {
@@ -565,14 +568,14 @@ func (rf *Raft) ticker() {
 			switch rf.role {
 			case FOLLOWER:
 				hbRecvTimeout = time.Duration(400+rand.Intn(200)) * time.Millisecond
-				rf.Log("Use random hb recieve time, time: %d ms", hbRecvTimeout)
+//				rf.Log("Use random hb recieve time, time: %d ms", hbRecvTimeout)
 				toChan = time.After(hbRecvTimeout)
 			case LEADER:
 				hbSendTimeout = time.Duration(100+rand.Intn(100)) * time.Millisecond
-				rf.Log("Use random hb send out time, time: %d ms", hbSendTimeout)
+//				rf.Log("Use random hb send out time, time: %d ms", hbSendTimeout)
 				toChan = time.After(hbSendTimeout)
 			case CANDIDATE:
-				rf.Log("Use candidate timeout.")
+//				rf.Log("Use candidate timeout.")
 				toChan = time.After(10 * time.Millisecond)
 			}
 		}
