@@ -381,14 +381,16 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	rf.Log("Number of peers: %v\n", len(rf.peers))
 	rf.Log("Leader's log entries %v\n", rf.log)
 	progress := 1
-	for serverInd, _ := range rf.peers {
+	npeers := len(rf.peers)
+	for serverInd := 0; serverInd < npeers; serverInd++ {
 		if serverInd == rf.me {
 			continue
 		}
 
-		ok := false
 		rf.Log("rf.nextIndex : %v", rf.nextIndex)
 		nInd := rf.nextIndex[serverInd]
+
+EACHSERVER:
 		// if nInd == -1, that iteration must succeed
 		for {
 			if nInd == -1 {
@@ -405,9 +407,10 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 			rf.Log("nInd : %d, len : %d", nInd, len(rf.log))
 			rf.Log("log entries: %v\n, from nInd %v", rf.log, rf.log[nInd:])
 
+			entriesToAppend := append(rf.log[nInd:], newEntry)
 			// 1st phase
 			args := AppendEntriesArgs{
-				Entries:      append(rf.log[nInd:], newEntry),
+				Entries:      append([]LogEntry(nil), entriesToAppend...),
 				PrevLogIndex: prevLogIndex,
 				PrevLogTerm:  prevLogTerm,
 				LeaderCommit: rf.commitIndex,
@@ -417,26 +420,36 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 
 			rf.Log("args:%v", args)
 			reply := AppendEntriesReply{}
-			ok = rf.sendAppendEntries(serverInd, &args, &reply)
-			if ok {
-				if reply.Success {
-					progress++
-					rf.receivers = append(rf.receivers, serverInd)
-					break
-				} else {
-					if reply.Term > rf.term {
-						rf.roleChanged <- RoleChangedInfo{
-							role: FOLLOWER,
-							term: reply.Term,
+			done := make(chan bool)
+			go func(serverInd int, args AppendEntriesArgs) {
+				done <- rf.sendAppendEntries(serverInd, &args, &reply)
+			}(serverInd, args)
+
+			select {
+			case ok := <-done:
+				if ok {
+					if reply.Success {
+						progress++
+						rf.receivers = append(rf.receivers, serverInd)
+						break EACHSERVER
+					} else {
+						if reply.Term > rf.term {
+							rf.roleChanged <- RoleChangedInfo{
+								role: FOLLOWER,
+								term: reply.Term,
+							}
+							break EACHSERVER
 						}
-						break
+						nInd--
 					}
-					nInd--
+				} else {
+					// RPC failure
+					break EACHSERVER
 				}
-			} else {
-				// RPC failure
-				break
+			case <-time.After(10 * time.Millisecond):
+				break EACHSERVER
 			}
+
 		}
 	}
 
@@ -556,7 +569,7 @@ func (rf *Raft) ticker() {
 		case rcInfo := <-rf.roleChanged:
 			rf.mu.Lock()
 			rf.term = rcInfo.term
-			rf.Log("rf.term become %v", rf.term)
+//			rf.Log("rf.term become %v", rf.term)
 			if rf.role != rcInfo.role {
 				rf.role = rcInfo.role
 				if rf.role == LEADER {
