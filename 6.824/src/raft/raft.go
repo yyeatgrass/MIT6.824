@@ -362,15 +362,16 @@ func (rf *Raft) sendCommit(server int, args *CommitArgs, reply *CommitReply) boo
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	index := -1
 	term := -1
-	isLeader := true
+	isLeader := false
 
 	// Your code here (2B).
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	if rf.role != LEADER {
-		isLeader = false
 		return index, term, isLeader
 	}
+
+	isLeader = true
 	// TODO
 	newEntry := LogEntry{
 		Command: command,
@@ -438,7 +439,8 @@ EACHSERVER:
 								role: FOLLOWER,
 								term: reply.Term,
 							}
-							break EACHSERVER
+							rf.Log("Transfer from leader to follower.")
+							goto END
 						}
 						nInd--
 					}
@@ -456,7 +458,6 @@ EACHSERVER:
 	if progress <= len(rf.peers) / 2 {
 		index = len(rf.log)
 		term = rf.term
-		isLeader = true
 		goto END
 	}
 
@@ -562,13 +563,15 @@ func (rf *Raft) ticker() {
 					rf.Log("Election failure")
 					rf.roleChanged <- RoleChangedInfo{
 						role: FOLLOWER,
-						term: rf.term,
 					}
 				}
 			}
 		case rcInfo := <-rf.roleChanged:
 			rf.mu.Lock()
-			rf.term = rcInfo.term
+			if rcInfo.term > 0 {
+				rf.Log("Change term from %v to %v.", rf.term, rcInfo.term)
+				rf.term = rcInfo.term
+			}
 //			rf.Log("rf.term become %v", rf.term)
 			if rf.role != rcInfo.role {
 				rf.role = rcInfo.role
