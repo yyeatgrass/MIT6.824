@@ -512,6 +512,7 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 			}
 			cfg.mu.Unlock()
 			if rf != nil {
+				// fmt.Printf("Start on server %v\n", si)
 				index1, _, ok := rf.Start(cmd)
 				if ok {
 					index = index1
