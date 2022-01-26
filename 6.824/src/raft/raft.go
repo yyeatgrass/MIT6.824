@@ -260,6 +260,24 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		term: args.Term,
 	}
 
+	rf.Log("LeaderCommit %v, rf commitIndex %v, lentmp %v", args.LeaderCommit, rf.commitIndex, len(rf.tmpEntries))
+	if args.LeaderCommit > rf.commitIndex &&
+	   args.LeaderCommit == rf.commitIndex + len(rf.tmpEntries) {
+		// commit
+		if len(rf.log) > rf.tmpPrevLogIndex+1 {
+			rf.log = rf.log[:rf.tmpPrevLogIndex+1]
+		}
+		rf.log = append(rf.log, rf.tmpEntries...)
+		rf.commitIndex = len(rf.log) - 1
+		for i, entry := range rf.tmpEntries {
+			rf.applyCh <- ApplyMsg{
+				CommandValid: true,
+				Command:      entry.Command,
+				CommandIndex: rf.tmpPrevLogIndex + i + 1,
+			}
+		}
+	}
+
 	if len(args.Entries) == 0 {
 		reply.Success = true
 		return
@@ -281,25 +299,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	rf.tmpPrevLogIndex = args.PrevLogIndex
 	rf.tmpEntries = args.Entries
 	reply.Success = true
-}
-
-func (rf *Raft) CommitEntries(args *CommitArgs, reply *CommitReply) {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-	if len(rf.log) > rf.tmpPrevLogIndex+1 {
-		rf.log = rf.log[:rf.tmpPrevLogIndex+1]
-	}
-
-	rf.log = append(rf.log, rf.tmpEntries...)
-	rf.commitIndex = len(rf.log) - 1
-	for i, entry := range rf.tmpEntries {
-		rf.applyCh <- ApplyMsg{
-			CommandValid: true,
-			Command:      entry.Command,
-			CommandIndex: rf.tmpPrevLogIndex + i + 1,
-		}
-	}
-	return
 }
 
 //
@@ -341,10 +340,6 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 	return ok
 }
 
-func (rf *Raft) sendCommit(server int, args *CommitArgs, reply *CommitReply) bool {
-	ok := rf.peers[server].Call("Raft.CommitEntries", args, reply)
-	return ok
-}
 //
 // the service using Raft (e.g. a k/v server) wants to start
 // agreement on the next command to be appended to Raft's log. if this
@@ -461,16 +456,12 @@ EACHSERVER:
 		goto END
 	}
 
-	// 2nd phrase
-	for _, serverInd := range rf.receivers {
-		ok := rf.sendCommit(serverInd, &CommitArgs{}, &CommitReply{})
-		if ok {
-//			rf.Log("2nd phase succeed")
-			rf.nextIndex[serverInd] = len(rf.log) + 1
-		}
-	}
 
 	rf.log = append(rf.log, newEntry)
+	for _, serverInd := range rf.receivers {
+		rf.nextIndex[serverInd] = len(rf.log)
+	}
+
 	index = len(rf.log) - 1
 	term = rf.term
 
@@ -529,21 +520,23 @@ func (rf *Raft) ticker() {
 					if serverInd == rf.me {
 						continue
 					}
-					go func(rf *Raft, term int, leaderInd int, serverInd int) {
+					go func(rf *Raft, serverInd int) {
+						rf.mu.Lock()
 						args := AppendEntriesArgs{
-							LeaderCommit: leaderInd,
+							LeaderCommit: rf.commitIndex,
 							LeaderId:     rf.me,
-							Term:         term,
+							Term:         rf.term,
 						}
+						rf.mu.Unlock()
 						reply := AppendEntriesReply{}
 						rf.sendAppendEntries(serverInd, &args, &reply)
-						if reply.Term > term {
+						if reply.Term > args.Term {
 							rf.roleChanged <- RoleChangedInfo{
 								role: FOLLOWER,
 								term: reply.Term,
 							}
 						}
-					}(rf, rf.term, rf.me, serverInd)
+					}(rf, serverInd)
 				}
 				toChan = time.After(hbSendTimeout)
 			case FOLLOWER:
@@ -687,6 +680,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 		role:        FOLLOWER,
 		term:        0,
 		votedFor:    -1,
+		commitIndex: -1,
 		roleChanged: make(chan RoleChangedInfo, 10),
 		nextIndex:   make([]int, len(peers)),
 		applyCh:     applyCh,
