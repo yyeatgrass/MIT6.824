@@ -46,6 +46,7 @@ type RoleChangedInfo struct {
 	role     Role
 	term     int
 	votedFor int
+	noHb     bool
 }
 
 //
@@ -225,9 +226,18 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	defer rf.mu.Unlock()
 
 	reply.Term = rf.term
-	if args.Term <= reply.Term ||
-		(len(rf.log) > 0 && (args.LastLogTerm < rf.log[len(rf.log) - 1].Term ||
-								  (args.LastLogTerm == rf.log[len(rf.log) - 1].Term && args.LastLogIndex <  len(rf.log) - 1))) {
+	if args.Term <= reply.Term {
+		reply.VoteGranted = false
+		rf.Log("vote not granted")
+		return
+	}
+
+	if len(rf.log) > 0 && (args.LastLogTerm < rf.log[len(rf.log) - 1].Term ||
+	   (args.LastLogTerm == rf.log[len(rf.log) - 1].Term && args.LastLogIndex <  len(rf.log) - 1)) {
+		rf.roleChanged <- RoleChangedInfo{
+			term:     args.Term,
+			noHb:     true,
+		}
 		reply.VoteGranted = false
 		rf.Log("vote not granted")
 		return
@@ -373,7 +383,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		Term:    rf.term,
 	}
 
-	rf.Log("The command %v\n", command)
+	// rf.Log("The command %v\n", command)
 	rf.Log("Number of peers: %v\n", len(rf.peers))
 	rf.Log("Leader's log entries %v\n", rf.log)
 	progress := 1
@@ -446,7 +456,6 @@ EACHSERVER:
 			case <-time.After(10 * time.Millisecond):
 				break EACHSERVER
 			}
-
 		}
 	}
 
@@ -565,7 +574,13 @@ func (rf *Raft) ticker() {
 				rf.Log("Change term from %v to %v.", rf.term, rcInfo.term)
 				rf.term = rcInfo.term
 			}
-//			rf.Log("rf.term become %v", rf.term)
+
+			if rcInfo.noHb {
+				rf.Log("No hearbeat, only update term.")
+				rf.mu.Unlock()
+				break
+			}
+
 			if rf.role != rcInfo.role {
 				rf.role = rcInfo.role
 				if rf.role == LEADER {
@@ -582,8 +597,8 @@ func (rf *Raft) ticker() {
 			if rcInfo.votedFor != -1 {
 				rf.votedFor = rcInfo.votedFor
 			}
-			rf.mu.Unlock()
 
+			rf.mu.Unlock()
 			switch rf.role {
 			case FOLLOWER:
 				hbRecvTimeout = time.Duration(400+rand.Intn(200)) * time.Millisecond
