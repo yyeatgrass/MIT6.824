@@ -18,11 +18,11 @@ package raft
 //
 
 import (
-	//	"bytes"
+	"bytes"
 	"sync"
 	"sync/atomic"
 
-	//	"6.824/labgob"
+	"6.824/labgob"
 	"6.824/labrpc"
 	"fmt"
 	"log"
@@ -123,13 +123,33 @@ func (rf *Raft) GetState() (int, bool) {
 func (rf *Raft) persist() {
 	// Your code here (2C).
 	// Example:
-	// w := new(bytes.Buffer)
-	// e := labgob.NewEncoder(w)
-	// e.Encode(rf.xxx)
-	// e.Encode(rf.yyy)
-	// data := w.Bytes()
-	// rf.persister.SaveRaftState(data)
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+
+	if err := e.Encode(rf.term); err != nil {
+		rf.Log("Decode term error: %v", err)
+		return
+	}
+
+	if err := e.Encode(rf.votedFor); err != nil {
+		rf.Log("Decode term error: %v", err)
+		return
+	}
+
+	if err := e.Encode(rf.commitIndex); err != nil {
+		rf.Log("Decode commitIndex error: %v", err)
+		return
+	}
+
+	if err := e.Encode(rf.log); err != nil {
+		rf.Log("Decode term error: %v", err)
+		return
+	}
+
+	data := w.Bytes()
+	rf.persister.SaveRaftState(data)
 }
+
 
 //
 // restore previously persisted state.
@@ -140,17 +160,37 @@ func (rf *Raft) readPersist(data []byte) {
 	}
 	// Your code here (2C).
 	// Example:
-	// r := bytes.NewBuffer(data)
-	// d := labgob.NewDecoder(r)
-	// var xxx
-	// var yyy
-	// if d.Decode(&xxx) != nil ||
-	//    d.Decode(&yyy) != nil {
-	//   error...
-	// } else {
-	//   rf.xxx = xxx
-	//   rf.yyy = yyy
-	// }
+	r := bytes.NewBuffer(data)
+	d := labgob.NewDecoder(r)
+	var term int
+	var votedFor int
+	var commitIndex int
+	var log []LogEntry
+
+	if err := d.Decode(&term); err != nil {
+		rf.Log("Decode term error: %v", err)
+		return
+	}
+
+	if err := d.Decode(&votedFor); err != nil {
+		rf.Log("Decode votedFor error: %v",err)
+		return
+	}
+
+	if err := d.Decode(&commitIndex); err != nil {
+		rf.Log("Decode commitIndex error: %v", err)
+		return
+	}
+
+	if err := d.Decode(&log); err != nil {
+		rf.Log("Decode log error: %v", err)
+		return
+	}
+
+	rf.term = term
+	rf.votedFor = votedFor
+	rf.commitIndex = commitIndex
+	rf.log = log
 }
 
 //
@@ -271,6 +311,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	}
 
 	rf.Log("LeaderCommit %v, rf commitIndex %v, lentmp %v", args.LeaderCommit, rf.commitIndex, len(rf.tmpEntries))
+	rf.Log("Logs :%v", rf.log)
 	if args.LeaderCommit > rf.commitIndex &&
 	   args.LeaderCommit == rf.commitIndex + len(rf.tmpEntries) {
 		// commit
@@ -279,6 +320,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		}
 		rf.log = append(rf.log, rf.tmpEntries...)
 		rf.commitIndex = len(rf.log) - 1
+		rf.persist()
 		for i, entry := range rf.tmpEntries {
 			rf.applyCh <- ApplyMsg{
 				CommandValid: true,
@@ -301,11 +343,13 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		return
 	}
 
+	rf.Log("aaaa")
 	if args.PrevLogIndex >= 0 && rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
 		reply.Success = false
 		return
 	}
 
+	rf.Log("bbbb")
 	rf.tmpPrevLogIndex = args.PrevLogIndex
 	rf.tmpEntries = args.Entries
 	reply.Success = true
@@ -467,6 +511,7 @@ EACHSERVER:
 
 
 	rf.log = append(rf.log, newEntry)
+	rf.persist()
 	for _, serverInd := range rf.receivers {
 		rf.nextIndex[serverInd] = len(rf.log)
 	}
@@ -482,6 +527,7 @@ EACHSERVER:
 		}
 	}
 	rf.commitIndex = len(rf.log) - 1
+	rf.persist()
 
 END:
 	rf.receivers = []int{}
@@ -573,6 +619,7 @@ func (rf *Raft) ticker() {
 			if rcInfo.term > 0 {
 				rf.Log("Change term from %v to %v.", rf.term, rcInfo.term)
 				rf.term = rcInfo.term
+				rf.persist()
 			}
 
 			if rcInfo.noHb {
@@ -589,6 +636,7 @@ func (rf *Raft) ticker() {
 						Command: "no-op",
 						Term:    rf.term,
 					})
+					rf.persist()
 					for server, _ := range rf.peers {
 						rf.nextIndex[server] = len(rf.log) - 1
 					}
