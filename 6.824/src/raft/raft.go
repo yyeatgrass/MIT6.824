@@ -96,7 +96,7 @@ type Raft struct {
 	commitIndex       int
 	nextIndex         []int
 	votedFor          int
-	tmpEntries        []LogEntry
+	tmpEntryLen       int
 	tmpPrevLogIndex   int
 	receivers         []int
 	roleChanged       chan RoleChangedInfo
@@ -249,13 +249,6 @@ type AppendEntriesReply struct {
 	Term    int
 }
 
-type CommitArgs struct {
-
-}
-
-type CommitReply struct {
-
-}
 
 //
 // example RequestVote RPC handler.
@@ -310,24 +303,22 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		term: args.Term,
 	}
 
-	rf.Log("LeaderCommit %v, rf commitIndex %v, lentmp %v", args.LeaderCommit, rf.commitIndex, len(rf.tmpEntries))
+	rf.Log("LeaderCommit %v, rf commitIndex %v, lentmp %v", args.LeaderCommit, rf.commitIndex, rf.tmpEntryLen)
 	rf.Log("Logs :%v", rf.log)
 	if args.LeaderCommit > rf.commitIndex &&
-	   args.LeaderCommit == rf.commitIndex + len(rf.tmpEntries) {
+	   args.LeaderCommit == rf.commitIndex + rf.tmpEntryLen {
 		// commit
-		if len(rf.log) > rf.tmpPrevLogIndex+1 {
-			rf.log = rf.log[:rf.tmpPrevLogIndex+1]
-		}
-		rf.log = append(rf.log, rf.tmpEntries...)
-		rf.commitIndex = len(rf.log) - 1
-		rf.persist()
-		for i, entry := range rf.tmpEntries {
+		for i := 0; i < rf.tmpEntryLen; i++ {
+			entry := rf.log[rf.commitIndex + 1]
 			rf.applyCh <- ApplyMsg{
 				CommandValid: true,
 				Command:      entry.Command,
-				CommandIndex: rf.tmpPrevLogIndex + i + 1,
+				CommandIndex: rf.commitIndex + 1,
 			}
+			rf.commitIndex++
 		}
+		rf.tmpEntryLen = 0
+		rf.persist()
 	}
 
 	if len(args.Entries) == 0 {
@@ -351,7 +342,10 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	rf.Log("bbbb")
 	rf.tmpPrevLogIndex = args.PrevLogIndex
-	rf.tmpEntries = args.Entries
+//	rf.tmpEntries = args.Entries
+	rf.log = append(rf.log[:rf.tmpPrevLogIndex+1], args.Entries...)
+	rf.Log("log after append %v", rf.log)
+	rf.tmpEntryLen = len(args.Entries)
 	reply.Success = true
 }
 
