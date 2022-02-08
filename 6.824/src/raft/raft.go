@@ -96,8 +96,6 @@ type Raft struct {
 	commitIndex       int
 	nextIndex         []int
 	votedFor          int
-	tmpEntryLen       int
-	tmpPrevLogIndex   int
 	receivers         []int
 	roleChanged       chan RoleChangedInfo
 	applyCh           chan ApplyMsg
@@ -303,22 +301,35 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		term: args.Term,
 	}
 
-	rf.Log("LeaderCommit %v, rf commitIndex %v, lentmp %v", args.LeaderCommit, rf.commitIndex, rf.tmpEntryLen)
+	rf.Log("LeaderCommit %v, rf commitIndex %v", args.LeaderCommit, rf.commitIndex)
 	rf.Log("Logs :%v", rf.log)
-	if args.LeaderCommit > rf.commitIndex &&
-	   args.LeaderCommit == rf.commitIndex + rf.tmpEntryLen {
-		// commit
-		for i := 0; i < rf.tmpEntryLen; i++ {
-			entry := rf.log[rf.commitIndex + 1]
-			rf.applyCh <- ApplyMsg{
-				CommandValid: true,
-				Command:      entry.Command,
-				CommandIndex: rf.commitIndex + 1,
+	if args.LeaderCommit > rf.commitIndex {
+		for i := rf.commitIndex + 1; i < len(rf.log) && rf.commitIndex < args.LeaderCommit; i++ {
+			sameTermFirstFound := true
+			if rf.log[i].Term == args.Term {
+				if sameTermFirstFound {
+					sameTermFirstFound = false
+					for j := rf.commitIndex + 1; j < i; j++ {
+						entry := rf.log[j]
+						rf.Log("Applying entry %v", entry)
+						rf.applyCh <- ApplyMsg{
+							CommandValid: true,
+							Command:      entry.Command,
+							CommandIndex: j,
+						}
+					}
+				}
+				entry := rf.log[i]
+				rf.Log("Applying entry %v", entry)
+				rf.applyCh <- ApplyMsg{
+					CommandValid: true,
+					Command:      entry.Command,
+					CommandIndex: i,
+				}
+				rf.commitIndex++
+				rf.persist()
 			}
-			rf.commitIndex++
 		}
-		rf.tmpEntryLen = 0
-		rf.persist()
 	}
 
 	if len(args.Entries) == 0 {
@@ -334,18 +345,25 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		return
 	}
 
-	rf.Log("aaaa")
 	if args.PrevLogIndex >= 0 && rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
 		reply.Success = false
 		return
 	}
 
-	rf.Log("bbbb")
-	rf.tmpPrevLogIndex = args.PrevLogIndex
-//	rf.tmpEntries = args.Entries
-	rf.log = append(rf.log[:rf.tmpPrevLogIndex+1], args.Entries...)
-	rf.Log("log after append %v", rf.log)
-	rf.tmpEntryLen = len(args.Entries)
+	rf.log = append(rf.log[:args.PrevLogIndex+1], args.Entries...)
+	if rf.commitIndex < args.LeaderCommit {
+		for i := rf.commitIndex + 1; i <= args.LeaderCommit; i++ {
+			entry := rf.log[i]
+			rf.Log("Applying entry %v", entry)
+			rf.applyCh <- ApplyMsg{
+				CommandValid: true,
+				Command:      entry.Command,
+				CommandIndex: i,
+			}
+			rf.commitIndex++
+			rf.persist()
+		}
+	}
 	reply.Success = true
 }
 
@@ -483,7 +501,7 @@ EACHSERVER:
 								term: reply.Term,
 							}
 							rf.Log("Transfer from leader to follower.")
-							goto END
+							break EACHSERVER
 						}
 						nInd--
 					}
@@ -503,7 +521,6 @@ EACHSERVER:
 		goto END
 	}
 
-
 	rf.log = append(rf.log, newEntry)
 	rf.persist()
 	for _, serverInd := range rf.receivers {
@@ -514,6 +531,7 @@ EACHSERVER:
 	term = rf.term
 
 	for i := rf.commitIndex + 1; i < len(rf.log); i++ {
+		rf.Log("Applying entry %v", rf.log[i])
 		rf.applyCh <- ApplyMsg{
 			CommandValid: true,
 			Command:      rf.log[i].Command,
@@ -626,13 +644,16 @@ func (rf *Raft) ticker() {
 				rf.role = rcInfo.role
 				if rf.role == LEADER {
 					rf.Log("I am a leader.")
-					rf.log = append(rf.log, LogEntry{
-						Command: "no-op",
-						Term:    rf.term,
-					})
-					rf.persist()
+					rf.mu.Unlock()
+					rf.Start("no-op")
+					rf.mu.Lock()
+					// rf.log = append(rf.log, LogEntry{
+					// 	Command: "no-op",
+					// 	Term:    rf.term,
+					// })
+					// rf.persist()
 					for server, _ := range rf.peers {
-						rf.nextIndex[server] = len(rf.log) - 1
+						rf.nextIndex[server] = len(rf.log)
 					}
 				}
 			}
