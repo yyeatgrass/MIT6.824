@@ -469,7 +469,7 @@ EACHSERVER:
 			rf.Log("nInd : %d, len : %d", nInd, len(rf.log))
 			rf.Log("log entries: %v\n, from nInd %v", rf.log, rf.log[nInd:])
 
-			entriesToAppend := append(rf.log[nInd:], newEntry)
+			entriesToAppend := append(rf.log[nInd:rf.commitIndex+1], newEntry)
 			// 1st phase
 			args := AppendEntriesArgs{
 				Entries:      append([]LogEntry(nil), entriesToAppend...),
@@ -521,6 +521,7 @@ EACHSERVER:
 		goto END
 	}
 
+	rf.log = rf.log[:rf.commitIndex+1]
 	rf.log = append(rf.log, newEntry)
 	rf.persist()
 	for _, serverInd := range rf.receivers {
@@ -647,11 +648,6 @@ func (rf *Raft) ticker() {
 					rf.mu.Unlock()
 					rf.Start("no-op")
 					rf.mu.Lock()
-					// rf.log = append(rf.log, LogEntry{
-					// 	Command: "no-op",
-					// 	Term:    rf.term,
-					// })
-					// rf.persist()
 					for server, _ := range rf.peers {
 						rf.nextIndex[server] = len(rf.log)
 					}
