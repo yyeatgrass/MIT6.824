@@ -442,6 +442,8 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	// rf.Log("The command %v\n", command)
 	rf.Log("Number of peers: %v\n", len(rf.peers))
 	rf.Log("Leader's log entries %v\n", rf.log)
+	rf.log = append(rf.log, newEntry)
+	rf.persist()
 	progress := 1
 	npeers := len(rf.peers)
 	for serverInd := 0; serverInd < npeers; serverInd++ {
@@ -469,7 +471,7 @@ EACHSERVER:
 			rf.Log("nInd : %d, len : %d", nInd, len(rf.log))
 			rf.Log("log entries: %v\n, from nInd %v", rf.log, rf.log[nInd:])
 
-			entriesToAppend := append(rf.log[nInd:], newEntry)
+			entriesToAppend := append(rf.log[nInd:])
 			// 1st phase
 			args := AppendEntriesArgs{
 				Entries:      append([]LogEntry(nil), entriesToAppend...),
@@ -509,7 +511,7 @@ EACHSERVER:
 					// RPC failure
 					break EACHSERVER
 				}
-			case <-time.After(10 * time.Millisecond):
+			case <-time.After(50 * time.Millisecond):
 				break EACHSERVER
 			}
 		}
@@ -521,8 +523,6 @@ EACHSERVER:
 		goto END
 	}
 
-	rf.log = append(rf.log, newEntry)
-	rf.persist()
 	for _, serverInd := range rf.receivers {
 		rf.nextIndex[serverInd] = len(rf.log)
 	}
