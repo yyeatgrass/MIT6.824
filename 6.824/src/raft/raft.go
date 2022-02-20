@@ -518,17 +518,12 @@ EACHSERVER:
 	}
 
 	if progress <= len(rf.peers) / 2 {
-		index = len(rf.log)
-		term = rf.term
 		goto END
 	}
 
 	for _, serverInd := range rf.receivers {
 		rf.nextIndex[serverInd] = len(rf.log)
 	}
-
-	index = len(rf.log) - 1
-	term = rf.term
 
 	for i := rf.commitIndex + 1; i < len(rf.log); i++ {
 		rf.Log("Applying entry %v", rf.log[i])
@@ -543,7 +538,7 @@ EACHSERVER:
 
 END:
 	rf.receivers = []int{}
-	return index, term, isLeader
+	return len(rf.log) - 1, rf.term, isLeader
 }
 
 //
