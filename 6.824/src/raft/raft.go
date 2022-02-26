@@ -343,7 +343,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	if len(rf.log) <= args.PrevLogIndex {
 		reply.Success = false
-		reply.ConflictTerm = rf.log[len(rf.log) - 1].Term + 1
+		reply.ConflictTerm = rf.log[len(rf.log) - 1].Term
 		return
 	}
 
@@ -511,11 +511,17 @@ EACHSERVER:
 						}
 						if reply.ConflictTerm > 0 {
 							rf.Log("Confilict term: %v", reply.ConflictTerm)
+							var tmpNInd int
 							for i := nInd; i > 0; i-- {
 								if rf.log[i].Term <= reply.ConflictTerm {
-									nInd = i + 1
+									tmpNInd = i + 1
 									break
 								}
+							}
+							if tmpNInd >= nInd {
+								nInd = nInd -1
+							} else {
+								nInd = tmpNInd
 							}
 							rf.Log("nInd: %v", nInd)
 						}
