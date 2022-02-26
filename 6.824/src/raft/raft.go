@@ -243,8 +243,9 @@ type AppendEntriesArgs struct {
 }
 
 type AppendEntriesReply struct {
-	Success bool
-	Term    int
+	Success       bool
+	Term          int
+	ConflictTerm  int
 }
 
 
@@ -342,11 +343,13 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	if len(rf.log) <= args.PrevLogIndex {
 		reply.Success = false
+		reply.ConflictTerm = rf.log[len(rf.log) - 1].Term + 1
 		return
 	}
 
 	if args.PrevLogIndex >= 0 && rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
 		reply.Success = false
+		reply.ConflictTerm = rf.log[args.PrevLogIndex].Term
 		return
 	}
 
@@ -495,6 +498,7 @@ EACHSERVER:
 					if reply.Success {
 						progress++
 						rf.receivers = append(rf.receivers, serverInd)
+						rf.Log("Reply success, break.")
 						break EACHSERVER
 					} else {
 						if reply.Term > rf.term {
@@ -505,13 +509,24 @@ EACHSERVER:
 							rf.Log("Transfer from leader to follower.")
 							break EACHSERVER
 						}
-						nInd--
+						if reply.ConflictTerm > 0 {
+							rf.Log("Confilict term: %v", reply.ConflictTerm)
+							for i := nInd; i > 0; i-- {
+								if rf.log[i].Term <= reply.ConflictTerm {
+									nInd = i + 1
+									break
+								}
+							}
+							rf.Log("nInd: %v", nInd)
+						}
 					}
 				} else {
 					// RPC failure
+					rf.Log("RPC failure, break.")
 					break EACHSERVER
 				}
-			case <-time.After(50 * time.Millisecond):
+			case <-time.After(100 * time.Millisecond):
+				rf.Log("RPC timeout, break.")
 				break EACHSERVER
 			}
 		}
