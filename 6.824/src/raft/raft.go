@@ -35,6 +35,11 @@ func init() {
 }
 
 type Role int
+type AppendResult struct{
+	serverInd int
+	res int
+}
+
 
 const (
 	FOLLOWER  Role = 0
@@ -96,9 +101,9 @@ type Raft struct {
 	commitIndex       int
 	nextIndex         []int
 	votedFor          int
-	receivers         []int
 	roleChanged       chan RoleChangedInfo
 	applyCh           chan ApplyMsg
+	opLock         sync.Mutex
 }
 
 // return currentTerm and whether this server
@@ -253,6 +258,8 @@ type AppendEntriesReply struct {
 // example RequestVote RPC handler.
 //
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
+	rf.opLock.Lock()
+	defer rf.opLock.Unlock()
 	// Your code here (2A, 2B).
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
@@ -286,6 +293,8 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 }
 
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
+	rf.opLock.Lock()
+	defer rf.opLock.Unlock()
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
@@ -302,7 +311,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		term: args.Term,
 	}
 
-	rf.Log("LeaderCommit %v, rf commitIndex %v", args.LeaderCommit, rf.commitIndex)
+	rf.Log("LeaderId: %v, LeaderCommit %v, rf commitIndex %v", args.LeaderId, args.LeaderCommit, rf.commitIndex)
 	rf.Log("Logs :%v", rf.log)
 	if args.LeaderCommit > rf.commitIndex {
 		for i := rf.commitIndex + 1; i < len(rf.log) && rf.commitIndex < args.LeaderCommit; i++ {
@@ -341,9 +350,14 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	rf.Log("entries before append: %v", rf.log)
 	rf.Log("args entries to be appended: %v", args.Entries)
 
+
 	if len(rf.log) <= args.PrevLogIndex {
 		reply.Success = false
-		reply.ConflictTerm = rf.log[len(rf.log) - 1].Term
+		if len(rf.log) > 0 {
+			reply.ConflictTerm = rf.log[len(rf.log) - 1].Term
+		} else {
+			reply.ConflictTerm = 0
+		}
 		return
 	}
 
@@ -409,6 +423,107 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 	return ok
 }
 
+
+func (rf *Raft) AppendToOneFollower(serverInd int, nInd int, progChan chan AppendResult) {
+	for {
+		rf.mu.Lock()
+		if nInd == -1 {
+			progChan <- AppendResult{serverInd, 0}
+			rf.mu.Unlock()
+			break
+		}
+		var prevLogIndex int
+		var prevLogTerm int
+		prevLogIndex = nInd - 1
+		if prevLogIndex < 0 {
+			prevLogTerm--
+		} else {
+			prevLogTerm = rf.log[prevLogIndex].Term
+		}
+		rf.Log("nInd : %d, len : %d", nInd, len(rf.log))
+		rf.Log("log entries: %v\n, from nInd %v", rf.log, rf.log[nInd:])
+
+		entriesToAppend := append(rf.log[nInd:])
+		// 1st phase
+		args := AppendEntriesArgs{
+			Entries:      append([]LogEntry(nil), entriesToAppend...),
+			PrevLogIndex: prevLogIndex,
+			PrevLogTerm:  prevLogTerm,
+			LeaderCommit: rf.commitIndex,
+			LeaderId:     rf.me,
+			Term:         rf.term,
+		}
+
+		rf.Log("args:%v", args)
+		rf.mu.Unlock()
+		reply := AppendEntriesReply{}
+		done := make(chan bool)
+		go func(serverInd int, args AppendEntriesArgs) {
+			done <- rf.sendAppendEntries(serverInd, &args, &reply)
+		}(serverInd, args)
+
+		select {
+		case ok := <-done:
+			rf.mu.Lock()
+			if ok {
+				if reply.Success {
+					progChan <- AppendResult{serverInd, 1}
+					rf.Log("Reply success, break.")
+					rf.mu.Unlock()
+					return
+				} else {
+					if reply.Term > rf.term {
+						rf.roleChanged <- RoleChangedInfo{
+							role: FOLLOWER,
+							term: reply.Term,
+						}
+						progChan <- AppendResult{serverInd, 0}
+						rf.Log("Transfer from leader to follower.")
+						rf.mu.Unlock()
+						return
+					}
+					rf.Log("ccccccccccccc")
+					if reply.ConflictTerm > 0 {
+						rf.Log("Confilict term: %v", reply.ConflictTerm)
+						var tmpNInd int
+						for i := nInd; i > 0; i-- {
+							if rf.log[i].Term <= reply.ConflictTerm {
+								tmpNInd = i + 1
+								break
+							}
+						}
+						if tmpNInd >= nInd {
+							nInd = nInd -1
+						} else {
+							nInd = tmpNInd
+						}
+					} else {
+						rf.Log("eeeeeeeeeeeeeeeeeee")
+						if nInd > 0 {
+							nInd = 0
+						} else {
+							nInd = -1
+						}
+					}
+					rf.Log("nInd: %v", nInd)
+					rf.mu.Unlock()
+				}
+			} else {
+				progChan <- AppendResult{serverInd, 0}
+				// RPC failure
+				rf.Log("RPC failure, break.")
+				rf.mu.Unlock()
+				return
+			}
+		case <-time.After(50 * time.Millisecond):
+			rf.mu.Lock()
+			progChan <- AppendResult{serverInd, 0}
+			rf.Log("RPC timeout, break.")
+			rf.mu.Unlock()
+			return
+		}
+	}
+}
 //
 // the service using Raft (e.g. a k/v server) wants to start
 // agreement on the next command to be appended to Raft's log. if this
@@ -429,6 +544,8 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	isLeader := false
 
 	// Your code here (2B).
+	rf.opLock.Lock()
+	defer rf.opLock.Unlock()
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	if rf.role != LEADER {
@@ -447,103 +564,36 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	rf.Log("Leader's log entries %v\n", rf.log)
 	rf.log = append(rf.log, newEntry)
 	rf.persist()
-	progress := 1
 	npeers := len(rf.peers)
+	progress := 1
+	progChan := make(chan AppendResult, npeers)
 	for serverInd := 0; serverInd < npeers; serverInd++ {
 		if serverInd == rf.me {
 			continue
 		}
 
-		rf.Log("rf.nextIndex : %v", rf.nextIndex)
-		nInd := rf.nextIndex[serverInd]
+		go rf.AppendToOneFollower(serverInd, rf.nextIndex[serverInd], progChan)
+	}
 
-EACHSERVER:
-		// if nInd == -1, that iteration must succeed
-		for {
-			if nInd == -1 {
-				break
-			}
-			var prevLogIndex int
-			var prevLogTerm int
-			prevLogIndex = nInd - 1
-			if prevLogIndex < 0 {
-				prevLogTerm--
-			} else {
-				prevLogTerm = rf.log[prevLogIndex].Term
-			}
-			rf.Log("nInd : %d, len : %d", nInd, len(rf.log))
-			rf.Log("log entries: %v\n, from nInd %v", rf.log, rf.log[nInd:])
-
-			entriesToAppend := append(rf.log[nInd:])
-			// 1st phase
-			args := AppendEntriesArgs{
-				Entries:      append([]LogEntry(nil), entriesToAppend...),
-				PrevLogIndex: prevLogIndex,
-				PrevLogTerm:  prevLogTerm,
-				LeaderCommit: rf.commitIndex,
-				LeaderId:     rf.me,
-				Term:         rf.term,
-			}
-
-			rf.Log("args:%v", args)
-			reply := AppendEntriesReply{}
-			done := make(chan bool)
-			go func(serverInd int, args AppendEntriesArgs) {
-				done <- rf.sendAppendEntries(serverInd, &args, &reply)
-			}(serverInd, args)
-
-			select {
-			case ok := <-done:
-				if ok {
-					if reply.Success {
-						progress++
-						rf.receivers = append(rf.receivers, serverInd)
-						rf.Log("Reply success, break.")
-						break EACHSERVER
-					} else {
-						if reply.Term > rf.term {
-							rf.roleChanged <- RoleChangedInfo{
-								role: FOLLOWER,
-								term: reply.Term,
-							}
-							rf.Log("Transfer from leader to follower.")
-							break EACHSERVER
-						}
-						if reply.ConflictTerm > 0 {
-							rf.Log("Confilict term: %v", reply.ConflictTerm)
-							var tmpNInd int
-							for i := nInd; i > 0; i-- {
-								if rf.log[i].Term <= reply.ConflictTerm {
-									tmpNInd = i + 1
-									break
-								}
-							}
-							if tmpNInd >= nInd {
-								nInd = nInd -1
-							} else {
-								nInd = tmpNInd
-							}
-							rf.Log("nInd: %v", nInd)
-						}
-					}
-				} else {
-					// RPC failure
-					rf.Log("RPC failure, break.")
-					break EACHSERVER
-				}
-			case <-time.After(100 * time.Millisecond):
-				rf.Log("RPC timeout, break.")
-				break EACHSERVER
-			}
+	rf.mu.Unlock()
+	rf.Log("aaaaaaaaaaaa")
+	nProgMesg := 0
+	appendResults := []AppendResult {}
+	for nProgMesg < npeers - 1 {
+		appdres := <-progChan
+		progress += appdres.res
+		appendResults = append(appendResults, appdres)
+		nProgMesg++
+	}
+	rf.mu.Lock()
+	rf.Log("bbbbbbbbbbbbbbb")
+	for _, r := range appendResults {
+		if r.res == 1 {
+			rf.nextIndex[r.serverInd] = len(rf.log)
 		}
 	}
-
 	if progress <= len(rf.peers) / 2 {
 		goto END
-	}
-
-	for _, serverInd := range rf.receivers {
-		rf.nextIndex[serverInd] = len(rf.log)
 	}
 
 	for i := rf.commitIndex + 1; i < len(rf.log); i++ {
@@ -556,9 +606,8 @@ EACHSERVER:
 	}
 	rf.commitIndex = len(rf.log) - 1
 	rf.persist()
-
 END:
-	rf.receivers = []int{}
+	rf.Log("Return for command %v", command)
 	return len(rf.log) - 1, rf.term, isLeader
 }
 
@@ -782,7 +831,6 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.peers = peers
 	rf.persister = persister
 	rf.me = me
-	rf.receivers = []int{}
 
 	// Your initialization code here (2A, 2B, 2C).
 
